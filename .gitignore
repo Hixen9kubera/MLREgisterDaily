@@ -1,0 +1,40 @@
+# Secrets
+.env
+.env.*.local
+*.local
+backend/.env
+frontend/.env
+frontend/.env.local
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+.pytest_cache/
+
+# Node
+node_modules/
+dist/
+.vite/
+
+# IDE / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Supabase
+backend/supabase/.branches/
+backend/supabase/.temp/
+
+# Reportes locales de ML (datos sensibles)
+*.xlsx
+*.xls
+*.csv
+
+# Logs locales
+*.log
+
+# Tareas en background del IDE
+.claude/

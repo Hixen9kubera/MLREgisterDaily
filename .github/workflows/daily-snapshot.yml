@@ -1,0 +1,31 @@
+name: Daily Snapshot
+
+on:
+  schedule:
+    # 14:00 UTC = 08:00 AM CDMX (Mexico abolio DST desde 2022, UTC-6 todo el ano)
+    - cron: '0 14 * * *'
+  workflow_dispatch:
+
+jobs:
+  trigger:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: POST /cron/snapshot
+        env:
+          BACKEND_URL: ${{ secrets.BACKEND_URL }}
+          CRON_SECRET: ${{ secrets.CRON_SHARED_SECRET }}
+        run: |
+          set -e
+          if [ -z "$BACKEND_URL" ] || [ -z "$CRON_SECRET" ]; then
+            echo "Faltan secretos BACKEND_URL o CRON_SHARED_SECRET"
+            exit 1
+          fi
+          echo "POST $BACKEND_URL/cron/snapshot"
+          curl --fail-with-body --silent --show-error \
+            --max-time 1500 \
+            -X POST "$BACKEND_URL/cron/snapshot" \
+            -H "X-Cron-Secret: $CRON_SECRET" \
+            -H "Content-Type: application/json"
+          echo ""
+          echo "Snapshot lanzado OK"
