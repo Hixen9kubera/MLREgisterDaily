@@ -4,6 +4,7 @@ from fastapi import APIRouter
 
 from app.db.supabase_client import supabase, retry_on_transient
 from app.routes.goals import _iso_monday
+from app.utils.tz import today_cdmx, cdmx_day_to_utc_range, utc_to_cdmx_date
 
 router = APIRouter(prefix="/dashboard", tags=["dashboard"])
 
@@ -12,7 +13,7 @@ def _resolve_range(date_from: date | None, date_to: date | None) -> tuple[date, 
     """Returns (start, end_inclusive, is_current_week)."""
     if date_from and date_to:
         return date_from, date_to, False
-    today = date.today()
+    today = today_cdmx()
     monday = _iso_monday(today)
     sunday = monday + timedelta(days=6)
     return monday, sunday, True
@@ -27,7 +28,7 @@ def summary(
 ):
     sb = supabase()
     start, end, is_current_week = _resolve_range(date_from, date_to)
-    end_exclusive = end + timedelta(days=1)
+    start_iso, end_iso = cdmx_day_to_utc_range(start, end)
 
     goal = None
     if account_id and is_current_week:
@@ -43,8 +44,9 @@ def summary(
     sales_q = (
         sb.table("sales")
         .select("account_id,total_amount,sold_at,quantity")
-        .gte("sold_at", start.isoformat())
-        .lt("sold_at", end_exclusive.isoformat())
+        .gte("sold_at", start_iso)
+        .lt("sold_at", end_iso)
+        .neq("status", "cancelled")
     )
     if account_id:
         sales_q = sales_q.eq("account_id", account_id)
@@ -59,16 +61,17 @@ def summary(
     target = float(goal["target_amount"]) if goal else 0.0
     progress = (total / target) if target else 0.0
 
-    # Período anterior del mismo tamaño
+    # Período anterior del mismo tamaño (en CDMX)
     span = (end - start).days + 1
     prev_end = start - timedelta(days=1)
     prev_start = prev_end - timedelta(days=span - 1)
-    prev_end_exclusive = prev_end + timedelta(days=1)
+    prev_start_iso, prev_end_iso = cdmx_day_to_utc_range(prev_start, prev_end)
     prev_q = (
         sb.table("sales")
         .select("total_amount,quantity")
-        .gte("sold_at", prev_start.isoformat())
-        .lt("sold_at", prev_end_exclusive.isoformat())
+        .gte("sold_at", prev_start_iso)
+        .lt("sold_at", prev_end_iso)
+        .neq("status", "cancelled")
     )
     if account_id:
         prev_q = prev_q.eq("account_id", account_id)
@@ -117,15 +120,16 @@ def sales_by_day(
     if date_from and date_to:
         start, end = date_from, date_to
     else:
-        end = date.today()
+        end = today_cdmx()
         start = end - timedelta(days=days - 1)
-    end_exclusive = end + timedelta(days=1)
+    start_iso, end_iso = cdmx_day_to_utc_range(start, end)
 
     q = (
         sb.table("sales")
         .select("sold_at,total_amount,account_id,quantity")
-        .gte("sold_at", start.isoformat())
-        .lt("sold_at", end_exclusive.isoformat())
+        .gte("sold_at", start_iso)
+        .lt("sold_at", end_iso)
+        .neq("status", "cancelled")
     )
     if account_id:
         q = q.eq("account_id", account_id)
@@ -138,7 +142,7 @@ def sales_by_day(
         cursor += timedelta(days=1)
 
     for r in rows:
-        d = (r["sold_at"] or "")[:10]
+        d = utc_to_cdmx_date(r["sold_at"] or "")
         if not d or d not in bucket:
             continue
         bucket[d]["total"] += float(r["total_amount"] or 0)
@@ -188,7 +192,7 @@ def top_products(
     sb = supabase()
 
     if metric == "stock_value":
-        today_iso = date.today().isoformat()
+        today_iso = today_cdmx().isoformat()
         q = (
             sb.table("products_snapshot")
             .select("ml_item_id,title,seller_sku,thumbnail,permalink,price,available_quantity,status")
@@ -207,12 +211,13 @@ def top_products(
         return rows[:limit]
 
     start, end, _ = _resolve_range(date_from, date_to)
-    end_exclusive = end + timedelta(days=1)
+    start_iso, end_iso = cdmx_day_to_utc_range(start, end)
     q = (
         sb.table("sales")
         .select("ml_item_id,total_amount,quantity,title")
-        .gte("sold_at", start.isoformat())
-        .lt("sold_at", end_exclusive.isoformat())
+        .gte("sold_at", start_iso)
+        .lt("sold_at", end_iso)
+        .neq("status", "cancelled")
     )
     if account_id:
         q = q.eq("account_id", account_id)
@@ -252,7 +257,7 @@ def top_products(
 
 
 def _fetch_all_snapshot_today(sb, account_id: str | None) -> list[dict]:
-    today_iso = date.today().isoformat()
+    today_iso = today_cdmx().isoformat()
     rows: list[dict] = []
     page_size = 1000
     offset = 0
@@ -326,16 +331,17 @@ def inactive_products(
     limit: int = 50,
 ):
     sb = supabase()
-    today = date.today()
+    today = today_cdmx()
     since = today - timedelta(days=days)
-    since_excl = today + timedelta(days=1)
+    since_iso, today_excl_iso = cdmx_day_to_utc_range(since, today)
 
     sold_ids: set[str] = set()
     sales_q = (
         sb.table("sales")
         .select("ml_item_id")
-        .gte("sold_at", since.isoformat())
-        .lt("sold_at", since_excl.isoformat())
+        .gte("sold_at", since_iso)
+        .lt("sold_at", today_excl_iso)
+        .neq("status", "cancelled")
     )
     if account_id:
         sales_q = sales_q.eq("account_id", account_id)
@@ -416,7 +422,7 @@ def top_views(
     limit: int = 10,
 ):
     sb = supabase()
-    today_iso = date.today().isoformat()
+    today_iso = today_cdmx().isoformat()
     col = {"1d": "visits_1d", "7d": "visits_7d", "30d": "visits_30d"}[window]
     q = (
         sb.table("products_snapshot")
@@ -440,17 +446,18 @@ def aged_products(
     limit: int = 50,
 ):
     sb = supabase()
-    today = date.today()
+    today = today_cdmx()
     age_cutoff = (datetime.now(timezone.utc) - timedelta(days=min_age_days)).isoformat()
     sales_since = today - timedelta(days=no_sales_days)
-    sales_since_excl = today + timedelta(days=1)
+    sales_since_iso, today_excl_iso = cdmx_day_to_utc_range(sales_since, today)
 
     sold_ids: set[str] = set()
     sales_q = (
         sb.table("sales")
         .select("ml_item_id")
-        .gte("sold_at", sales_since.isoformat())
-        .lt("sold_at", sales_since_excl.isoformat())
+        .gte("sold_at", sales_since_iso)
+        .lt("sold_at", today_excl_iso)
+        .neq("status", "cancelled")
     )
     if account_id:
         sales_q = sales_q.eq("account_id", account_id)

@@ -4,6 +4,7 @@ from typing import Any
 
 from app.db.supabase_client import supabase
 from app.services.ml_api import MLClient
+from app.utils.tz import today_cdmx
 
 
 SCALAR_TRACKED_FIELDS = [
@@ -129,7 +130,7 @@ def ensure_account(ml_user_id: int, nickname: str) -> str:
 
 
 def take_snapshot(client: MLClient, account_id: str, snap_date: date | None = None) -> dict:
-    snap_date = snap_date or datetime.now(timezone.utc).date()
+    snap_date = snap_date or today_cdmx()
     sb = supabase()
 
     ids = list(client.iter_item_ids())

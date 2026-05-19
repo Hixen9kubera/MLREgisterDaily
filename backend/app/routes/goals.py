@@ -4,6 +4,7 @@ from pydantic import BaseModel, Field
 
 from app.db.supabase_client import supabase
 from app.config import get_settings
+from app.utils.tz import today_cdmx
 
 router = APIRouter(prefix="/goals", tags=["goals"])
 
@@ -22,7 +23,7 @@ class GoalIn(BaseModel):
 
 @router.get("/current")
 def get_current_goal(account_id: str = Query(...)):
-    today = date.today()
+    today = today_cdmx()
     monday = _iso_monday(today)
     sb = supabase()
     r = (
@@ -62,7 +63,7 @@ def list_goals(account_id: str | None = None, limit: int = 12):
 
 @router.put("/current")
 def upsert_current_goal(payload: GoalIn):
-    monday = _iso_monday(payload.week_start or date.today())
+    monday = _iso_monday(payload.week_start or today_cdmx())
     sb = supabase()
     existing = (
         sb.table("goals")

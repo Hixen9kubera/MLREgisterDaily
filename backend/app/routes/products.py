@@ -4,6 +4,7 @@ from fastapi import APIRouter, HTTPException, Query
 
 from app.db.supabase_client import supabase
 from app.routes.goals import _iso_monday
+from app.utils.tz import today_cdmx, cdmx_day_to_utc_range
 
 router = APIRouter(prefix="/products", tags=["products"])
 
@@ -16,7 +17,7 @@ def list_products(
     offset: int = 0,
 ):
     sb = supabase()
-    today_iso = date.today().isoformat()
+    today_iso = today_cdmx().isoformat()
 
     res = (
         sb.table("products_snapshot")
@@ -43,7 +44,7 @@ def products_with_changes(
     limit: int = Query(default=20, le=200),
 ):
     sb = supabase()
-    today = date.today()
+    today = today_cdmx()
     if range == "today":
         start = today
     else:
@@ -142,11 +143,11 @@ def product_changes(
             raise HTTPException(400, "start and end required for custom range")
         s, e = start, end
     elif range == "month":
-        today = date.today()
+        today = today_cdmx()
         s = today.replace(day=1)
         e = today
     else:
-        today = date.today()
+        today = today_cdmx()
         s = _iso_monday(today)
         e = s + timedelta(days=6)
 
@@ -165,12 +166,16 @@ def product_changes(
 @router.get("/{ml_item_id}/sales")
 def product_sales(ml_item_id: str, days: int = 30):
     sb = supabase()
-    since = (date.today() - timedelta(days=days)).isoformat()
+    today = today_cdmx()
+    since = today - timedelta(days=days)
+    since_iso, today_excl_iso = cdmx_day_to_utc_range(since, today)
     rows = (
         sb.table("sales")
         .select("*")
         .eq("ml_item_id", ml_item_id)
-        .gte("sold_at", since)
+        .gte("sold_at", since_iso)
+        .lt("sold_at", today_excl_iso)
+        .neq("status", "cancelled")
         .order("sold_at", desc=True)
         .execute()
     ).data or []
