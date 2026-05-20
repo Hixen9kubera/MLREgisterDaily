@@ -21,7 +21,11 @@ async def lifespan(_: FastAPI):
         sched = BackgroundScheduler(timezone="America/Mexico_City")
         sched.add_job(
             run_daily_job,
-            CronTrigger(hour=s.LOCAL_SCHEDULER_HOUR, minute=s.LOCAL_SCHEDULER_MINUTE),
+            CronTrigger(
+                hour=s.LOCAL_SCHEDULER_HOUR,
+                minute=s.LOCAL_SCHEDULER_MINUTE,
+                timezone="America/Mexico_City",
+            ),
             id="daily_snapshot",
             replace_existing=True,
         )
