@@ -28,6 +28,8 @@ export const api = {
     req<any[]>(`/dashboard/sales-by-day${qs({ days: params.days ?? 14, account_id: params.account_id, date_from: params.date_from, date_to: params.date_to })}`),
   topDays: (params: { account_id?: string; date_from?: string; date_to?: string; days?: number; limit?: number } = {}) =>
     req<any[]>(`/dashboard/top-days${qs({ account_id: params.account_id, date_from: params.date_from, date_to: params.date_to, days: params.days ?? 30, limit: params.limit ?? 7 })}`),
+  hourlySales: (params: { account_id?: string; target_date?: string } = {}) =>
+    req<{ date: string; hours: any[]; summary: any }>(`/dashboard/hourly-sales${qs({ account_id: params.account_id, target_date: params.target_date })}`),
   topProducts: (params: { metric: "revenue" | "units" | "ticket" | "stock_value"; account_id?: string; date_from?: string; date_to?: string; limit?: number }) =>
     req<any[]>(`/dashboard/top-products${qs({ metric: params.metric, account_id: params.account_id, date_from: params.date_from, date_to: params.date_to, limit: params.limit ?? 10 })}`),
   inventorySummary: (account_id?: string) =>

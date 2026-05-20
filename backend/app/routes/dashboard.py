@@ -151,6 +151,104 @@ def sales_by_day(
     return [{"date": k, **v} for k, v in sorted(bucket.items())]
 
 
+@router.get("/hourly-sales")
+@retry_on_transient
+def hourly_sales(
+    account_id: str | None = None,
+    target_date: date | None = None,
+):
+    """Devuelve ventas agrupadas por hora del día (00-23 CDMX) para una fecha específica.
+    Incluye 3 series: ventas brutas (todas), reales (sin canceladas) y solo canceladas."""
+    from zoneinfo import ZoneInfo
+    sb = supabase()
+    d = target_date or today_cdmx()
+    start_iso, end_iso = cdmx_day_to_utc_range(d, d)
+
+    q = (
+        sb.table("sales")
+        .select("sold_at,total_amount,quantity,status,ml_order_id")
+        .gte("sold_at", start_iso)
+        .lt("sold_at", end_iso)
+    )
+    if account_id:
+        q = q.eq("account_id", account_id)
+
+    rows: list[dict] = []
+    offset = 0
+    page = 1000
+    while True:
+        chunk = (q.range(offset, offset + page - 1).execute()).data or []
+        rows.extend(chunk)
+        if len(chunk) < page:
+            break
+        offset += page
+
+    TZ = ZoneInfo("America/Mexico_City")
+    hours: list[dict] = []
+    gross_orders_per_h: list[set] = [set() for _ in range(24)]
+    net_orders_per_h: list[set] = [set() for _ in range(24)]
+    cancelled_orders_per_h: list[set] = [set() for _ in range(24)]
+
+    for h in range(24):
+        hours.append({
+            "hour": h,
+            "hour_label": f"{h:02d}:00",
+            "gross_total": 0.0,
+            "net_total": 0.0,
+            "cancelled_total": 0.0,
+            "gross_units": 0,
+            "net_units": 0,
+            "cancelled_units": 0,
+        })
+
+    for r in rows:
+        sold = datetime.fromisoformat(r["sold_at"].replace("Z", "+00:00")).astimezone(TZ)
+        h = sold.hour
+        amt = float(r.get("total_amount") or 0)
+        qty = int(r.get("quantity") or 0)
+        oid = r.get("ml_order_id")
+        is_cancelled = r.get("status") == "cancelled"
+
+        hours[h]["gross_total"] += amt
+        hours[h]["gross_units"] += qty
+        if oid is not None:
+            gross_orders_per_h[h].add(oid)
+        if is_cancelled:
+            hours[h]["cancelled_total"] += amt
+            hours[h]["cancelled_units"] += qty
+            if oid is not None:
+                cancelled_orders_per_h[h].add(oid)
+        else:
+            hours[h]["net_total"] += amt
+            hours[h]["net_units"] += qty
+            if oid is not None:
+                net_orders_per_h[h].add(oid)
+
+    for h in range(24):
+        hours[h]["gross_total"] = round(hours[h]["gross_total"], 2)
+        hours[h]["net_total"] = round(hours[h]["net_total"], 2)
+        hours[h]["cancelled_total"] = round(hours[h]["cancelled_total"], 2)
+        hours[h]["gross_orders"] = len(gross_orders_per_h[h])
+        hours[h]["net_orders"] = len(net_orders_per_h[h])
+        hours[h]["cancelled_orders"] = len(cancelled_orders_per_h[h])
+
+    return {
+        "date": d.isoformat(),
+        "hours": hours,
+        "summary": {
+            "gross_total": round(sum(h["gross_total"] for h in hours), 2),
+            "net_total": round(sum(h["net_total"] for h in hours), 2),
+            "cancelled_total": round(sum(h["cancelled_total"] for h in hours), 2),
+            "gross_orders": len(set().union(*gross_orders_per_h)),
+            "net_orders": len(set().union(*net_orders_per_h)),
+            "cancelled_orders": len(set().union(*cancelled_orders_per_h)),
+            "gross_units": sum(h["gross_units"] for h in hours),
+            "net_units": sum(h["net_units"] for h in hours),
+            "cancelled_units": sum(h["cancelled_units"] for h in hours),
+        },
+    }
+
+
 @router.get("/top-days")
 def top_days(
     account_id: str | None = None,

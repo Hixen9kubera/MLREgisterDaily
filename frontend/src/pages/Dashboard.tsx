@@ -9,7 +9,7 @@ import { useAccount } from "../lib/useAccount";
 
 const PAGE_SIZE = 10;
 import {
-  Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis,
+  Bar, BarChart, CartesianGrid, Legend, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis,
 } from "recharts";
 
 function isoMonday(d: Date) {
@@ -258,6 +258,8 @@ export default function Dashboard() {
         />
       </div>
 
+      <HourlySalesSection accountId={accountId} />
+
       <TopViewsSection accountId={accountId} />
 
       <LowStockSection accountId={accountId} />
@@ -325,6 +327,79 @@ function TopProductsCard({
             </li>
           ))}
         </ol>
+      )}
+    </Card>
+  );
+}
+
+function HourlySalesSection({ accountId }: { accountId: string }) {
+  const [day, setDay] = useState<string>(todayIso());
+  const q = useQuery({
+    queryKey: ["hourly-sales", accountId, day],
+    queryFn: () => api.hourlySales({ account_id: accountId, target_date: day }),
+  });
+  const data = q.data?.hours ?? [];
+  const s = q.data?.summary;
+
+  return (
+    <Card title="Ventas por hora del día">
+      <div className="flex flex-wrap items-center gap-3 mb-4">
+        <label className="text-xs text-slate-600">Fecha:</label>
+        <input
+          type="date"
+          value={day}
+          onChange={(e) => setDay(e.target.value)}
+          className="px-2 py-1 border border-slate-200 rounded-md text-sm"
+        />
+        <button
+          onClick={() => setDay(todayIso())}
+          className="px-2 py-1 text-xs border border-slate-200 rounded-md hover:bg-slate-50"
+        >Hoy</button>
+        <div className="ml-auto text-xs text-slate-500">
+          Día CDMX 00:00 a 23:59
+        </div>
+      </div>
+
+      {q.isLoading ? <div className="text-slate-400 text-sm">Cargando…</div> : (
+        <>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mb-4">
+            <MiniStat
+              label="Ventas brutas (incluye canceladas)"
+              value={fmtMXN(Number(s?.gross_total ?? 0))}
+              sub={`${s?.gross_orders ?? 0} órdenes · ${s?.gross_units ?? 0} u.`}
+              accent="slate"
+            />
+            <MiniStat
+              label="Ventas reales (sin canceladas)"
+              value={fmtMXN(Number(s?.net_total ?? 0))}
+              sub={`${s?.net_orders ?? 0} órdenes · ${s?.net_units ?? 0} u.`}
+              accent="emerald"
+            />
+            <MiniStat
+              label="Cancelaciones"
+              value={fmtMXN(Number(s?.cancelled_total ?? 0))}
+              sub={`${s?.cancelled_orders ?? 0} órdenes · ${s?.cancelled_units ?? 0} u.`}
+              accent="rose"
+            />
+          </div>
+
+          <div style={{ width: "100%", height: 320 }}>
+            <ResponsiveContainer>
+              <LineChart data={data}>
+                <CartesianGrid strokeDasharray="3 3" />
+                <XAxis dataKey="hour_label" />
+                <YAxis tickFormatter={(v) => `$${(v / 1000).toFixed(0)}k`} />
+                <Tooltip
+                  formatter={(v: any, name: string) => [fmtMXN(Number(v)), name]}
+                />
+                <Legend />
+                <Line type="monotone" dataKey="gross_total" name="Brutas" stroke="#6366f1" strokeWidth={2} dot={{ r: 3 }} />
+                <Line type="monotone" dataKey="net_total" name="Reales" stroke="#10b981" strokeWidth={2} dot={{ r: 3 }} />
+                <Line type="monotone" dataKey="cancelled_total" name="Canceladas" stroke="#f43f5e" strokeWidth={2} dot={{ r: 3 }} />
+              </LineChart>
+            </ResponsiveContainer>
+          </div>
+        </>
       )}
     </Card>
   );
