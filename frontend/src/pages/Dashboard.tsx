@@ -231,6 +231,8 @@ export default function Dashboard() {
         </Card>
       </div>
 
+      <HourlySalesSection accountId={accountId} />
+
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
         <TopProductsCard
           title="Top 10 productos con más ventas"
@@ -257,8 +259,6 @@ export default function Dashboard() {
           secondary={(p) => `${p.current_stock} u. × ${fmtMXN(Number(p.current_price || 0))}`}
         />
       </div>
-
-      <HourlySalesSection accountId={accountId} />
 
       <TopViewsSection accountId={accountId} />
 
