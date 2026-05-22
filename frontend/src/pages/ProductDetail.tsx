@@ -65,17 +65,38 @@ export default function ProductDetail() {
   const [weekIndex, setWeekIndex] = useState<number>(0);
   const [salesPage, setSalesPage] = useState(1);
   const [compPage, setCompPage] = useState(1);
-  const [showComparison, setShowComparison] = useState(false);
+  const [forceFetched, setForceFetched] = useState(false);
 
   const product = useQuery({ queryKey: ["product", id], queryFn: () => api.product(id!) });
   const changes = useQuery({ queryKey: ["product-changes", id, range], queryFn: () => api.productChanges(id!, range) });
   const sales = useQuery({ queryKey: ["product-sales", id], queryFn: () => api.productSales(id!, 30) });
+
+  // Auto-cargar cache si ya existe (sin disparar Apify)
+  const cached = useQuery({
+    queryKey: ["product-competition-cache", id],
+    queryFn: async () => {
+      try {
+        return await api.competitionCache(id!);
+      } catch (e: any) {
+        if (String(e?.message || "").startsWith("404")) return null;
+        throw e;
+      }
+    },
+    enabled: !!id,
+    staleTime: 60 * 60 * 1000,
+  });
+
+  // Solo dispara Apify cuando el usuario da clic explícito
   const comparison = useQuery({
     queryKey: ["product-competition", id],
     queryFn: () => api.compareCompetition(id!),
-    enabled: showComparison && !!id,
+    enabled: forceFetched && !!id,
     staleTime: 60 * 60 * 1000,
   });
+
+  const hasResults = !!cached.data || !!comparison.data;
+  const activeData = comparison.data || cached.data || null;
+  const isLoading = comparison.isFetching;
 
   const monthWeeks = useMemo(() => weeksOfMonth(new Date()), []);
 
@@ -111,44 +132,63 @@ export default function ProductDetail() {
       </div>
 
       <Card>
-        <div className="flex gap-4">
-          {p.thumbnail && <img src={p.thumbnail} alt="" className="w-24 h-24 rounded object-cover" />}
-          <div className="flex-1">
-            <h1 className="text-lg font-semibold text-slate-900">{p.title}</h1>
+        <div className="flex flex-col md:flex-row gap-6">
+          {p.thumbnail && (
+            <img
+              src={p.thumbnail}
+              alt=""
+              className="w-full md:w-48 h-48 md:h-48 rounded-lg object-cover bg-slate-50 flex-shrink-0"
+            />
+          )}
+          <div className="flex-1 min-w-0">
+            <h1 className="text-xl font-semibold text-slate-900">{p.title}</h1>
             <div className="text-sm text-slate-500 mt-1">
               {p.ml_item_id} · {p.status}
               {p.seller_sku ? <span className="font-mono"> · SKU {p.seller_sku}</span> : null}
             </div>
-            <div className="mt-3 grid grid-cols-2 md:grid-cols-4 gap-3 text-sm">
-              <div><div className="text-slate-500 text-xs">Precio</div><div className="font-medium">{fmtMXN(Number(p.price))}</div></div>
-              <div><div className="text-slate-500 text-xs">Stock</div><div className="font-medium">{p.available_quantity}</div></div>
-              <div><div className="text-slate-500 text-xs">Vendidos (total)</div><div className="font-medium">{p.sold_quantity}</div></div>
+            <div className="mt-4 grid grid-cols-2 md:grid-cols-4 gap-3 text-sm">
+              <div><div className="text-slate-500 text-xs">Precio</div><div className="font-medium text-lg">{fmtMXN(Number(p.price))}</div></div>
+              <div><div className="text-slate-500 text-xs">Stock</div><div className="font-medium text-lg">{p.available_quantity}</div></div>
+              <div><div className="text-slate-500 text-xs">Vendidos (total)</div><div className="font-medium text-lg">{p.sold_quantity}</div></div>
               <div><div className="text-slate-500 text-xs">Listing</div><div className="font-medium">{p.listing_type_id}</div></div>
             </div>
-            <div className="mt-3 flex flex-wrap items-center gap-3">
+            <div className="mt-4 flex flex-wrap items-center gap-3">
               {p.permalink && (
                 <a href={p.permalink} target="_blank" rel="noreferrer" className="text-sm text-indigo-600 hover:underline">
                   Ver en MercadoLibre ↗
                 </a>
               )}
-              <button
-                onClick={() => setShowComparison(true)}
-                disabled={showComparison && comparison.isLoading}
-                className="px-3 py-1.5 text-sm rounded-md bg-slate-900 text-white hover:bg-slate-800 disabled:opacity-50"
-              >
-                {showComparison && comparison.isLoading ? "Buscando competencia…" : "Comparar con otros"}
-              </button>
+              {!hasResults && (
+                <button
+                  onClick={() => setForceFetched(true)}
+                  disabled={isLoading}
+                  className="px-3 py-1.5 text-sm rounded-md bg-slate-900 text-white hover:bg-slate-800 disabled:opacity-50"
+                >
+                  {isLoading ? "Buscando competencia…" : "Comparar con otros"}
+                </button>
+              )}
+              {hasResults && !forceFetched && (
+                <button
+                  onClick={() => setForceFetched(true)}
+                  disabled={isLoading}
+                  className="px-3 py-1.5 text-xs rounded-md border border-slate-200 hover:bg-slate-50 disabled:opacity-50"
+                  title="Forzar nueva búsqueda en Apify (~30-60s)"
+                >
+                  {isLoading ? "Actualizando…" : "Actualizar comparativa"}
+                </button>
+              )}
             </div>
           </div>
         </div>
       </Card>
 
-      {showComparison && (
+      {(hasResults || isLoading) && (
         <CompetitionCard
-          q={comparison}
+          data={activeData}
+          loading={isLoading && !activeData}
+          error={comparison.error}
           page={compPage}
           setPage={setCompPage}
-          onClose={() => setShowComparison(false)}
         />
       )}
 
@@ -255,8 +295,8 @@ export default function ProductDetail() {
   );
 }
 
-function CompetitionCard({ q, page, setPage, onClose }: { q: any; page: number; setPage: (n: number) => void; onClose: () => void }) {
-  if (q.isLoading) {
+function CompetitionCard({ data, loading, error, page, setPage }: { data: any; loading: boolean; error: any; page: number; setPage: (n: number) => void }) {
+  if (loading) {
     return (
       <Card title="Comparativa con competencia">
         <div className="text-slate-500 text-sm flex items-center gap-2">
@@ -266,15 +306,13 @@ function CompetitionCard({ q, page, setPage, onClose }: { q: any; page: number; 
       </Card>
     );
   }
-  if (q.error) {
+  if (error && !data) {
     return (
       <Card title="Comparativa con competencia">
-        <div className="text-red-600 text-sm">Error: {(q.error as Error).message}</div>
-        <button onClick={onClose} className="mt-2 text-xs text-slate-600 underline">Cerrar</button>
+        <div className="text-red-600 text-sm">Error: {(error as Error).message}</div>
       </Card>
     );
   }
-  const data = q.data;
   if (!data) return null;
   const items: any[] = data.items ?? [];
   const totalPages = Math.max(1, Math.ceil(items.length / COMP_PAGE_SIZE));

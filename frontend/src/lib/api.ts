@@ -56,6 +56,8 @@ export const api = {
     req<{ keyword: string; items: any[]; total: number; cached: boolean; fetched_at: string }>(`/products/${encodeURIComponent(id)}/compare-competition${qs({ force: force ? "true" : "" })}`, {
       method: "POST",
     }),
+  competitionCache: (id: string) =>
+    req<{ keyword: string; items: any[]; total: number; cached: boolean; fetched_at: string }>(`/products/${encodeURIComponent(id)}/competition-cache`),
   goalCurrent: (account_id: string) => req<any>(`/goals/current${qs({ account_id })}`),
   goalsList: (account_id?: string) => req<any[]>(`/goals${qs({ account_id })}`),
   saveGoal: (account_id: string, target_amount: number, note?: string) =>

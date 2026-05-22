@@ -60,18 +60,17 @@ def keyword_from_permalink(permalink: str | None, fallback_title: str | None = N
     return ""
 
 
-def get_cached(ml_item_id: str) -> dict | None:
+def get_cached(ml_item_id: str, max_age_hours: int | None = CACHE_TTL_HOURS) -> dict | None:
     sb = supabase()
-    cutoff = (datetime.now(timezone.utc) - timedelta(hours=CACHE_TTL_HOURS)).isoformat()
-    r = (
+    q = (
         sb.table("competition_cache")
         .select("*")
         .eq("ml_item_id", ml_item_id)
-        .gte("fetched_at", cutoff)
-        .order("fetched_at", desc=True)
-        .limit(1)
-        .execute()
     )
+    if max_age_hours is not None:
+        cutoff = (datetime.now(timezone.utc) - timedelta(hours=max_age_hours)).isoformat()
+        q = q.gte("fetched_at", cutoff)
+    r = q.order("fetched_at", desc=True).limit(1).execute()
     return r.data[0] if r.data else None
 
 

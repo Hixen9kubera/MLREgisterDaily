@@ -4,7 +4,7 @@ from fastapi import APIRouter, HTTPException, Query
 
 from app.db.supabase_client import supabase
 from app.routes.goals import _iso_monday
-from app.services.competition import fetch_competition
+from app.services.competition import fetch_competition, get_cached
 from app.utils.tz import today_cdmx, cdmx_day_to_utc_range
 
 router = APIRouter(prefix="/products", tags=["products"])
@@ -162,6 +162,25 @@ def product_changes(
         .execute()
     ).data or []
     return {"start": s.isoformat(), "end": e.isoformat(), "changes": rows}
+
+
+@router.get("/{ml_item_id}/competition-cache")
+def get_competition_cache(ml_item_id: str):
+    """Devuelve el ultimo cache de competencia para este producto.
+    Sin importar TTL (puede ser de hace dias). Si no hay cache, devuelve 404.
+    Util para auto-cargar resultados anteriores sin disparar Apify.
+    """
+    cached = get_cached(ml_item_id, max_age_hours=None)
+    if not cached:
+        raise HTTPException(404, "no cache")
+    items = cached.get("items") or []
+    return {
+        "keyword": cached["keyword"],
+        "items": items[:25],
+        "total": min(len(items), 25),
+        "cached": True,
+        "fetched_at": cached["fetched_at"],
+    }
 
 
 @router.post("/{ml_item_id}/compare-competition")
