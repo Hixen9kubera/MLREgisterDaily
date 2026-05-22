@@ -1,7 +1,7 @@
 import { useMemo, useState } from "react";
 import { useParams, Link } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
-import { api, fmtMXN } from "../lib/api";
+import { api, fmtMXN, hdImage } from "../lib/api";
 import { Card } from "../components/Card";
 import { Pagination } from "../components/Pagination";
 
@@ -135,9 +135,11 @@ export default function ProductDetail() {
         <div className="flex flex-col md:flex-row gap-6">
           {p.thumbnail && (
             <img
-              src={p.thumbnail}
+              src={hdImage(p.thumbnail)}
               alt=""
+              loading="lazy"
               className="w-full md:w-48 h-48 md:h-48 rounded-lg object-cover bg-slate-50 flex-shrink-0"
+              onError={(e) => { (e.currentTarget as HTMLImageElement).src = p.thumbnail; }}
             />
           )}
           <div className="flex-1 min-w-0">

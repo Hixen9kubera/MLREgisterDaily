@@ -70,6 +70,12 @@ export const api = {
 export const fmtMXN = (n: number) =>
   new Intl.NumberFormat("es-MX", { style: "currency", currency: "MXN", maximumFractionDigits: 0 }).format(n || 0);
 
+export function hdImage(url?: string | null): string {
+  if (!url) return "";
+  // Reemplaza el sufijo de tamaño chico (-I, -V, -W) por -O (original) en el CDN de ML
+  return url.replace(/-[IVWST]\.(jpg|jpeg|png|webp)(\?.*)?$/i, "-O.$1$2");
+}
+
 export const fmtDayShort = (iso: string) => {
   const d = new Date(iso + "T00:00:00");
   if (Number.isNaN(d.getTime())) return iso;
