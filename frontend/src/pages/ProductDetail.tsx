@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import { useParams, Link } from "react-router-dom";
-import { useQuery, useMutation } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
 import { api, fmtMXN } from "../lib/api";
 import { Card } from "../components/Card";
 import { Pagination } from "../components/Pagination";
@@ -76,13 +76,6 @@ export default function ProductDetail() {
     enabled: showComparison && !!id,
     staleTime: 60 * 60 * 1000,
   });
-  const refreshComparison = useMutation({
-    mutationFn: () => api.compareCompetition(id!, true),
-    onSuccess: (data) => {
-      comparison.refetch();
-      setCompPage(1);
-    },
-  });
 
   const monthWeeks = useMemo(() => weeksOfMonth(new Date()), []);
 
@@ -145,16 +138,6 @@ export default function ProductDetail() {
               >
                 {showComparison && comparison.isLoading ? "Buscando competencia…" : "Comparar con otros"}
               </button>
-              {showComparison && comparison.data?.cached && (
-                <button
-                  onClick={() => refreshComparison.mutate()}
-                  disabled={refreshComparison.isPending}
-                  className="px-3 py-1.5 text-xs rounded-md border border-slate-200 hover:bg-slate-50 disabled:opacity-50"
-                  title="Forzar nueva búsqueda en Apify (toma ~50s)"
-                >
-                  {refreshComparison.isPending ? "Actualizando…" : "Actualizar"}
-                </button>
-              )}
             </div>
           </div>
         </div>
@@ -313,7 +296,7 @@ function CompetitionCard({ q, page, setPage, onClose }: { q: any; page: number; 
         <div className="text-slate-400 text-sm">No se encontraron productos competidores.</div>
       ) : (
         <>
-          <div className="space-y-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
             {slice.map((it: any, i: number) => (
               <CompetitionItem key={`${safePage}-${i}`} item={it} rank={(safePage - 1) * COMP_PAGE_SIZE + i + 1} />
             ))}
@@ -339,54 +322,63 @@ function CompetitionItem({ item, rank }: { item: any; rank: number }) {
   const sku = item.SKU;
 
   return (
-    <div className="flex flex-col md:flex-row gap-4 border border-slate-200 rounded-md p-3">
-      <div className="flex-shrink-0">
+    <div className="flex flex-col border border-slate-200 rounded-md overflow-hidden hover:shadow-md transition-shadow bg-white">
+      <div className="relative bg-slate-50 aspect-square">
         {img ? (
-          <img src={img} alt="" className="w-48 h-48 rounded object-cover bg-slate-50" />
+          <img src={img} alt="" className="w-full h-full object-cover" />
         ) : (
-          <div className="w-48 h-48 rounded bg-slate-100 flex items-center justify-center text-slate-400 text-xs">Sin imagen</div>
+          <div className="w-full h-full flex items-center justify-center text-slate-400 text-xs">Sin imagen</div>
+        )}
+        <span className="absolute top-2 left-2 text-xs w-7 h-7 rounded-full flex items-center justify-center font-semibold bg-white/90 text-slate-700 shadow">
+          {rank}
+        </span>
+        {descuento && (
+          <span className="absolute top-2 right-2 px-2 py-0.5 rounded bg-rose-500 text-white text-xs font-semibold shadow">
+            {descuento}
+          </span>
         )}
       </div>
-      <div className="flex-1 min-w-0">
-        <div className="flex items-start gap-2">
-          <span className="text-xs w-6 h-6 rounded-full flex-shrink-0 flex items-center justify-center font-semibold bg-slate-100 text-slate-600">{rank}</span>
-          <div className="flex-1">
-            {url ? (
-              <a href={url} target="_blank" rel="noreferrer" className="text-sm font-medium text-indigo-600 hover:underline">{titulo}</a>
-            ) : (
-              <div className="text-sm font-medium text-slate-900">{titulo}</div>
-            )}
-            <div className="text-xs text-slate-500 mt-1">
-              {sku && <span className="font-mono">{sku}</span>}
-              {vendedor && <> · vendedor <span className="font-medium text-slate-700">{vendedor}</span></>}
-              {marca && <> · {marca}</>}
-            </div>
+      <div className="p-3 flex flex-col gap-2">
+        {url ? (
+          <a
+            href={url}
+            target="_blank"
+            rel="noreferrer"
+            className="text-sm font-medium text-slate-900 hover:text-indigo-600 line-clamp-2 min-h-[2.5rem]"
+            title={titulo}
+          >
+            {titulo}
+          </a>
+        ) : (
+          <div className="text-sm font-medium text-slate-900 line-clamp-2 min-h-[2.5rem]" title={titulo}>
+            {titulo}
           </div>
-        </div>
-        <div className="mt-3 flex flex-wrap items-baseline gap-3">
-          <div>
-            <div className="text-xs text-slate-500">Precio actual</div>
-            <div className="text-xl font-bold text-emerald-700">{moneda} {precioActual ? Number(precioActual).toLocaleString("es-MX") : "—"}</div>
+        )}
+
+        <div className="flex flex-col">
+          <div className="text-xl font-bold text-emerald-700">
+            {moneda} {precioActual ? Number(precioActual).toLocaleString("es-MX") : "—"}
           </div>
           {precioAntes && (
-            <div>
-              <div className="text-xs text-slate-500">Precio anterior</div>
-              <div className="text-sm line-through text-slate-400">{moneda} {Number(precioAntes).toLocaleString("es-MX")}</div>
+            <div className="text-xs line-through text-slate-400">
+              antes: {moneda} {Number(precioAntes).toLocaleString("es-MX")}
             </div>
           )}
-          {descuento && (
-            <span className="px-2 py-0.5 rounded bg-rose-100 text-rose-700 text-xs font-semibold">{descuento}</span>
-          )}
         </div>
-        {installments && (
-          <div className="mt-2 text-xs text-slate-600">{installments}</div>
-        )}
-        <div className="mt-2 flex flex-wrap gap-2 text-xs">
-          {item.Envio && <span className="px-2 py-0.5 rounded bg-sky-100 text-sky-700">{item.Envio}</span>}
-          {item.envioDesde && <span className="px-2 py-0.5 rounded bg-slate-100 text-slate-600">Desde: {item.envioDesde}</span>}
-          {item.highlight && <span className="px-2 py-0.5 rounded bg-amber-100 text-amber-700">{item.highlight}</span>}
-          {item.esCompraIternacional && <span className="px-2 py-0.5 rounded bg-violet-100 text-violet-700">Internacional</span>}
-          {item.promociones && <span className="px-2 py-0.5 rounded bg-emerald-100 text-emerald-700">{item.promociones}</span>}
+
+        <div className="text-xs text-slate-500 leading-tight space-y-0.5">
+          {vendedor && <div>Vendedor: <span className="font-medium text-slate-700">{vendedor}</span></div>}
+          {marca && <div>Marca: {marca}</div>}
+          {sku && <div className="font-mono truncate">{sku}</div>}
+          {installments && <div className="text-emerald-700">{installments}</div>}
+        </div>
+
+        <div className="flex flex-wrap gap-1 text-xs mt-auto pt-1">
+          {item.Envio && <span className="px-1.5 py-0.5 rounded bg-sky-100 text-sky-700">{item.Envio}</span>}
+          {item.envioDesde && <span className="px-1.5 py-0.5 rounded bg-slate-100 text-slate-600">{item.envioDesde}</span>}
+          {item.highlight && <span className="px-1.5 py-0.5 rounded bg-amber-100 text-amber-700">{item.highlight}</span>}
+          {item.esCompraIternacional && <span className="px-1.5 py-0.5 rounded bg-violet-100 text-violet-700">Internacional</span>}
+          {item.promociones && <span className="px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-700">{item.promociones}</span>}
         </div>
       </div>
     </div>
