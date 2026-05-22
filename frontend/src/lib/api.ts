@@ -52,6 +52,10 @@ export const api = {
     req<any>(`/products/${encodeURIComponent(id)}/changes${qs({ range })}`),
   productSales: (id: string, days = 30) =>
     req<any>(`/products/${encodeURIComponent(id)}/sales${qs({ days })}`),
+  compareCompetition: (id: string, force = false) =>
+    req<{ keyword: string; items: any[]; total: number; cached: boolean; fetched_at: string }>(`/products/${encodeURIComponent(id)}/compare-competition${qs({ force: force ? "true" : "" })}`, {
+      method: "POST",
+    }),
   goalCurrent: (account_id: string) => req<any>(`/goals/current${qs({ account_id })}`),
   goalsList: (account_id?: string) => req<any[]>(`/goals${qs({ account_id })}`),
   saveGoal: (account_id: string, target_amount: number, note?: string) =>

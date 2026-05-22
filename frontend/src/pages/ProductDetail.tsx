@@ -1,8 +1,12 @@
 import { useMemo, useState } from "react";
 import { useParams, Link } from "react-router-dom";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useMutation } from "@tanstack/react-query";
 import { api, fmtMXN } from "../lib/api";
 import { Card } from "../components/Card";
+import { Pagination } from "../components/Pagination";
+
+const SALES_PAGE_SIZE = 10;
+const COMP_PAGE_SIZE = 5;
 
 function fmtDayWithName(iso: string) {
   const d = new Date(iso + "T00:00:00");
@@ -59,10 +63,26 @@ export default function ProductDetail() {
   const { id } = useParams();
   const [range, setRange] = useState<"week" | "month">("week");
   const [weekIndex, setWeekIndex] = useState<number>(0);
+  const [salesPage, setSalesPage] = useState(1);
+  const [compPage, setCompPage] = useState(1);
+  const [showComparison, setShowComparison] = useState(false);
 
   const product = useQuery({ queryKey: ["product", id], queryFn: () => api.product(id!) });
   const changes = useQuery({ queryKey: ["product-changes", id, range], queryFn: () => api.productChanges(id!, range) });
   const sales = useQuery({ queryKey: ["product-sales", id], queryFn: () => api.productSales(id!, 30) });
+  const comparison = useQuery({
+    queryKey: ["product-competition", id],
+    queryFn: () => api.compareCompetition(id!),
+    enabled: showComparison && !!id,
+    staleTime: 60 * 60 * 1000,
+  });
+  const refreshComparison = useMutation({
+    mutationFn: () => api.compareCompetition(id!, true),
+    onSuccess: (data) => {
+      comparison.refetch();
+      setCompPage(1);
+    },
+  });
 
   const monthWeeks = useMemo(() => weeksOfMonth(new Date()), []);
 
@@ -112,14 +132,42 @@ export default function ProductDetail() {
               <div><div className="text-slate-500 text-xs">Vendidos (total)</div><div className="font-medium">{p.sold_quantity}</div></div>
               <div><div className="text-slate-500 text-xs">Listing</div><div className="font-medium">{p.listing_type_id}</div></div>
             </div>
-            {p.permalink && (
-              <a href={p.permalink} target="_blank" rel="noreferrer" className="inline-block mt-3 text-sm text-indigo-600 hover:underline">
-                Ver en MercadoLibre ↗
-              </a>
-            )}
+            <div className="mt-3 flex flex-wrap items-center gap-3">
+              {p.permalink && (
+                <a href={p.permalink} target="_blank" rel="noreferrer" className="text-sm text-indigo-600 hover:underline">
+                  Ver en MercadoLibre ↗
+                </a>
+              )}
+              <button
+                onClick={() => setShowComparison(true)}
+                disabled={showComparison && comparison.isLoading}
+                className="px-3 py-1.5 text-sm rounded-md bg-slate-900 text-white hover:bg-slate-800 disabled:opacity-50"
+              >
+                {showComparison && comparison.isLoading ? "Buscando competencia…" : "Comparar con otros"}
+              </button>
+              {showComparison && comparison.data?.cached && (
+                <button
+                  onClick={() => refreshComparison.mutate()}
+                  disabled={refreshComparison.isPending}
+                  className="px-3 py-1.5 text-xs rounded-md border border-slate-200 hover:bg-slate-50 disabled:opacity-50"
+                  title="Forzar nueva búsqueda en Apify (toma ~50s)"
+                >
+                  {refreshComparison.isPending ? "Actualizando…" : "Actualizar"}
+                </button>
+              )}
+            </div>
           </div>
         </div>
       </Card>
+
+      {showComparison && (
+        <CompetitionCard
+          q={comparison}
+          page={compPage}
+          setPage={setCompPage}
+          onClose={() => setShowComparison(false)}
+        />
+      )}
 
       <Card
         title={range === "week" ? "Cambios — esta semana (lun-dom)" : "Cambios — mes en curso (por semana lun-dom)"}
@@ -192,26 +240,155 @@ export default function ProductDetail() {
       </Card>
 
       <Card title={`Ventas (últimos 30 días) · ${sales.data?.units ?? 0} unidades · ${fmtMXN(Number(sales.data?.total ?? 0))}`}>
-        {(sales.data?.items ?? []).length === 0 ? (
-          <div className="text-slate-400 text-sm">Sin ventas registradas.</div>
-        ) : (
-          <table className="w-full text-sm">
-            <thead className="text-left text-slate-500">
-              <tr><th className="py-2">Fecha</th><th>Orden</th><th>Cant.</th><th className="text-right">Monto</th></tr>
-            </thead>
-            <tbody>
-              {sales.data!.items.map((o: any) => (
-                <tr key={o.id} className="border-t border-slate-100">
-                  <td className="py-2">{new Date(o.sold_at).toLocaleString("es-MX")}</td>
-                  <td className="font-mono text-xs">{o.ml_order_id}</td>
-                  <td>{o.quantity}</td>
-                  <td className="text-right font-medium">{fmtMXN(Number(o.total_amount))}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        )}
+        {(() => {
+          const items = sales.data?.items ?? [];
+          if (items.length === 0) return <div className="text-slate-400 text-sm">Sin ventas registradas.</div>;
+          const totalPages = Math.max(1, Math.ceil(items.length / SALES_PAGE_SIZE));
+          const safePage = Math.min(salesPage, totalPages);
+          const slice = items.slice((safePage - 1) * SALES_PAGE_SIZE, safePage * SALES_PAGE_SIZE);
+          return (
+            <>
+              <table className="w-full text-sm">
+                <thead className="text-left text-slate-500">
+                  <tr><th className="py-2">Fecha</th><th>Orden</th><th>Cant.</th><th className="text-right">Monto</th></tr>
+                </thead>
+                <tbody>
+                  {slice.map((o: any) => (
+                    <tr key={o.id} className="border-t border-slate-100">
+                      <td className="py-2">{new Date(o.sold_at).toLocaleString("es-MX")}</td>
+                      <td className="font-mono text-xs">{o.ml_order_id}</td>
+                      <td>{o.quantity}</td>
+                      <td className="text-right font-medium">{fmtMXN(Number(o.total_amount))}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+              <Pagination page={safePage} pageSize={SALES_PAGE_SIZE} total={items.length} onChange={setSalesPage} />
+            </>
+          );
+        })()}
       </Card>
+    </div>
+  );
+}
+
+function CompetitionCard({ q, page, setPage, onClose }: { q: any; page: number; setPage: (n: number) => void; onClose: () => void }) {
+  if (q.isLoading) {
+    return (
+      <Card title="Comparativa con competencia">
+        <div className="text-slate-500 text-sm flex items-center gap-2">
+          <span className="inline-block w-3 h-3 rounded-full bg-indigo-500 animate-pulse" />
+          Buscando en MercadoLibre vía Apify… (esto toma ~30-60 segundos la primera vez)
+        </div>
+      </Card>
+    );
+  }
+  if (q.error) {
+    return (
+      <Card title="Comparativa con competencia">
+        <div className="text-red-600 text-sm">Error: {(q.error as Error).message}</div>
+        <button onClick={onClose} className="mt-2 text-xs text-slate-600 underline">Cerrar</button>
+      </Card>
+    );
+  }
+  const data = q.data;
+  if (!data) return null;
+  const items: any[] = data.items ?? [];
+  const totalPages = Math.max(1, Math.ceil(items.length / COMP_PAGE_SIZE));
+  const safePage = Math.min(page, totalPages);
+  const slice = items.slice((safePage - 1) * COMP_PAGE_SIZE, safePage * COMP_PAGE_SIZE);
+
+  return (
+    <Card title={`Comparativa con competencia · ${items.length} productos`}>
+      <div className="flex flex-wrap items-center justify-between gap-2 mb-3 text-xs text-slate-500">
+        <div>
+          Búsqueda: <span className="font-mono">"{data.keyword}"</span>
+        </div>
+        <div>
+          {data.cached ? "Resultados en caché" : "Recién consultado"} · {new Date(data.fetched_at).toLocaleString("es-MX")}
+        </div>
+      </div>
+
+      {items.length === 0 ? (
+        <div className="text-slate-400 text-sm">No se encontraron productos competidores.</div>
+      ) : (
+        <>
+          <div className="space-y-4">
+            {slice.map((it: any, i: number) => (
+              <CompetitionItem key={`${safePage}-${i}`} item={it} rank={(safePage - 1) * COMP_PAGE_SIZE + i + 1} />
+            ))}
+          </div>
+          <Pagination page={safePage} pageSize={COMP_PAGE_SIZE} total={items.length} onChange={setPage} />
+        </>
+      )}
+    </Card>
+  );
+}
+
+function CompetitionItem({ item, rank }: { item: any; rank: number }) {
+  const img = item.imgDireccion || item.thumbnail || item.image;
+  const titulo = item.articuloTitulo || item.title || "Sin título";
+  const precioActual = item.nuevoPrecio || item.price;
+  const precioAntes = item.precioAnterior;
+  const descuento = item.precioDiscount;
+  const moneda = (item.Moneda || "MXN").replace("$", "").trim() || "MXN";
+  const installments = item.installments;
+  const vendedor = item.Vendedor;
+  const marca = item.productoMarca;
+  const url = item.zdireccion;
+  const sku = item.SKU;
+
+  return (
+    <div className="flex flex-col md:flex-row gap-4 border border-slate-200 rounded-md p-3">
+      <div className="flex-shrink-0">
+        {img ? (
+          <img src={img} alt="" className="w-48 h-48 rounded object-cover bg-slate-50" />
+        ) : (
+          <div className="w-48 h-48 rounded bg-slate-100 flex items-center justify-center text-slate-400 text-xs">Sin imagen</div>
+        )}
+      </div>
+      <div className="flex-1 min-w-0">
+        <div className="flex items-start gap-2">
+          <span className="text-xs w-6 h-6 rounded-full flex-shrink-0 flex items-center justify-center font-semibold bg-slate-100 text-slate-600">{rank}</span>
+          <div className="flex-1">
+            {url ? (
+              <a href={url} target="_blank" rel="noreferrer" className="text-sm font-medium text-indigo-600 hover:underline">{titulo}</a>
+            ) : (
+              <div className="text-sm font-medium text-slate-900">{titulo}</div>
+            )}
+            <div className="text-xs text-slate-500 mt-1">
+              {sku && <span className="font-mono">{sku}</span>}
+              {vendedor && <> · vendedor <span className="font-medium text-slate-700">{vendedor}</span></>}
+              {marca && <> · {marca}</>}
+            </div>
+          </div>
+        </div>
+        <div className="mt-3 flex flex-wrap items-baseline gap-3">
+          <div>
+            <div className="text-xs text-slate-500">Precio actual</div>
+            <div className="text-xl font-bold text-emerald-700">{moneda} {precioActual ? Number(precioActual).toLocaleString("es-MX") : "—"}</div>
+          </div>
+          {precioAntes && (
+            <div>
+              <div className="text-xs text-slate-500">Precio anterior</div>
+              <div className="text-sm line-through text-slate-400">{moneda} {Number(precioAntes).toLocaleString("es-MX")}</div>
+            </div>
+          )}
+          {descuento && (
+            <span className="px-2 py-0.5 rounded bg-rose-100 text-rose-700 text-xs font-semibold">{descuento}</span>
+          )}
+        </div>
+        {installments && (
+          <div className="mt-2 text-xs text-slate-600">{installments}</div>
+        )}
+        <div className="mt-2 flex flex-wrap gap-2 text-xs">
+          {item.Envio && <span className="px-2 py-0.5 rounded bg-sky-100 text-sky-700">{item.Envio}</span>}
+          {item.envioDesde && <span className="px-2 py-0.5 rounded bg-slate-100 text-slate-600">Desde: {item.envioDesde}</span>}
+          {item.highlight && <span className="px-2 py-0.5 rounded bg-amber-100 text-amber-700">{item.highlight}</span>}
+          {item.esCompraIternacional && <span className="px-2 py-0.5 rounded bg-violet-100 text-violet-700">Internacional</span>}
+          {item.promociones && <span className="px-2 py-0.5 rounded bg-emerald-100 text-emerald-700">{item.promociones}</span>}
+        </div>
+      </div>
     </div>
   );
 }

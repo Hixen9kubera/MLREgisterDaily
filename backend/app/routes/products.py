@@ -4,6 +4,7 @@ from fastapi import APIRouter, HTTPException, Query
 
 from app.db.supabase_client import supabase
 from app.routes.goals import _iso_monday
+from app.services.competition import fetch_competition
 from app.utils.tz import today_cdmx, cdmx_day_to_utc_range
 
 router = APIRouter(prefix="/products", tags=["products"])
@@ -161,6 +162,28 @@ def product_changes(
         .execute()
     ).data or []
     return {"start": s.isoformat(), "end": e.isoformat(), "changes": rows}
+
+
+@router.post("/{ml_item_id}/compare-competition")
+def compare_competition(ml_item_id: str, force: bool = False):
+    sb = supabase()
+    last = (
+        sb.table("products_snapshot")
+        .select("permalink,title,price")
+        .eq("ml_item_id", ml_item_id)
+        .order("snapshot_date", desc=True)
+        .limit(1)
+        .execute()
+    ).data
+    if not last:
+        raise HTTPException(404, "Product not found")
+    p = last[0]
+    try:
+        return fetch_competition(ml_item_id, p.get("permalink"), p.get("title"), force=force)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    except Exception as e:
+        raise HTTPException(502, f"Apify error: {e}")
 
 
 @router.get("/{ml_item_id}/sales")

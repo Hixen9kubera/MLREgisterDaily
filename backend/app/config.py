@@ -41,6 +41,11 @@ class Settings(BaseSettings):
     # Default goal
     DEFAULT_WEEKLY_GOAL_MXN: float = 1_800_000.00
 
+    # Apify
+    APIFY_API_KEY: str | None = None
+    APIFY_USER_ID: str | None = None
+    APIFY_ML_ACTOR: str = "karamelo/mercadolibre-scraper-espanol-castellano"
+
 
 @lru_cache
 def get_settings() -> Settings:
