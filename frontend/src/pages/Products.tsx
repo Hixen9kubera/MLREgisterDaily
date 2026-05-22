@@ -4,14 +4,16 @@ import { Link } from "react-router-dom";
 import { api, fmtMXN } from "../lib/api";
 import { Card } from "../components/Card";
 import { AccountPicker } from "../components/AccountPicker";
+import { Pagination } from "../components/Pagination";
 import { useAccount } from "../lib/useAccount";
+
+const PAGE_SIZE = 10;
 
 export default function Products() {
   const { accountId, setAccountId, accounts } = useAccount();
   const [q, setQ] = useState("");
-  const [page, setPage] = useState(0);
+  const [page, setPage] = useState(1);
   const [filterByAccount, setFilterByAccount] = useState(true);
-  const limit = 50;
 
   const effectiveAccountId = filterByAccount ? accountId : "";
 
@@ -21,8 +23,8 @@ export default function Products() {
       api.products({
         account_id: effectiveAccountId || undefined,
         q: q || undefined,
-        limit,
-        offset: page * limit,
+        limit: PAGE_SIZE,
+        offset: (page - 1) * PAGE_SIZE,
       }),
     enabled: !filterByAccount || !!accountId,
   });
@@ -44,7 +46,7 @@ export default function Products() {
         <div className="flex flex-wrap gap-3 items-center">
           <input
             value={q}
-            onChange={(e) => { setQ(e.target.value); setPage(0); }}
+            onChange={(e) => { setQ(e.target.value); setPage(1); }}
             placeholder="Buscar por título, SKU o ID…"
             className="px-3 py-2 border border-slate-200 rounded-md text-sm w-72"
           />
@@ -58,7 +60,7 @@ export default function Products() {
                 setFilterByAccount(true);
                 setAccountId(id);
               }
-              setPage(0);
+              setPage(1);
             }}
             includeAll
           />
@@ -105,10 +107,12 @@ export default function Products() {
             )}
           </tbody>
         </table>
-        <div className="flex justify-end gap-2 mt-3">
-          <button disabled={page === 0} onClick={() => setPage(p => Math.max(0, p - 1))} className="px-3 py-1 text-sm border rounded disabled:opacity-40">Anterior</button>
-          <button onClick={() => setPage(p => p + 1)} className="px-3 py-1 text-sm border rounded">Siguiente</button>
-        </div>
+        <Pagination
+          page={page}
+          pageSize={PAGE_SIZE}
+          total={products.data?.count ?? 0}
+          onChange={setPage}
+        />
       </Card>
 
       <ChangesSection title="Productos con cambios hoy" data={changesToday.data?.items ?? []} loading={changesToday.isLoading} />
