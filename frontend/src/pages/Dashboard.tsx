@@ -5,6 +5,7 @@ import { api, fmtMXN, fmtDayShort } from "../lib/api";
 import { Card, Stat } from "../components/Card";
 import { AccountPicker } from "../components/AccountPicker";
 import { Pagination } from "../components/Pagination";
+import { ProductSearchBar } from "../components/ProductSearchBar";
 import { useAccount } from "../lib/useAccount";
 
 const PAGE_SIZE = 10;
@@ -112,6 +113,8 @@ export default function Dashboard() {
 
   return (
     <div className="space-y-6">
+      <ProductSearchBar />
+
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <div className="text-xs text-slate-500">Cuenta</div>
@@ -362,24 +365,30 @@ function HourlySalesSection({ accountId }: { accountId: string }) {
 
       {q.isLoading ? <div className="text-slate-400 text-sm">Cargando…</div> : (
         <>
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mb-4">
+          <div className="grid grid-cols-1 md:grid-cols-4 gap-3 mb-4">
             <MiniStat
-              label="Ventas brutas (incluye canceladas)"
+              label="Ventas brutas"
               value={fmtMXN(Number(s?.gross_total ?? 0))}
               sub={`${s?.gross_orders ?? 0} órdenes · ${s?.gross_units ?? 0} u.`}
               accent="slate"
             />
             <MiniStat
-              label="Ventas reales (sin canceladas)"
+              label="Ventas reales (no devueltas)"
               value={fmtMXN(Number(s?.net_total ?? 0))}
               sub={`${s?.net_orders ?? 0} órdenes · ${s?.net_units ?? 0} u.`}
               accent="emerald"
             />
             <MiniStat
-              label="Cancelaciones"
+              label="Cancelaciones reales"
               value={fmtMXN(Number(s?.cancelled_total ?? 0))}
-              sub={`${s?.cancelled_orders ?? 0} órdenes · ${s?.cancelled_units ?? 0} u.`}
+              sub={`${s?.cancelled_orders ?? 0} órdenes · refunds tras pago`}
               accent="rose"
+            />
+            <MiniStat
+              label="Carritos abandonados"
+              value={fmtMXN(Number(s?.abandoned_total ?? 0))}
+              sub={`${s?.abandoned_orders ?? 0} órdenes · sin pago, ML los ignora`}
+              accent="amber"
             />
           </div>
 
