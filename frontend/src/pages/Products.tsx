@@ -68,9 +68,6 @@ export default function Products() {
         </div>
       </Card>
 
-      <ChangesSection title="Productos con cambios hoy" data={changesToday.data?.items ?? []} loading={changesToday.isLoading} />
-      <ChangesSection title="Productos con cambios esta semana" data={changesWeek.data?.items ?? []} loading={changesWeek.isLoading} />
-
       <Card title="Listado">
         <table className="w-full text-sm">
           <thead className="text-left text-slate-500">
@@ -113,6 +110,9 @@ export default function Products() {
           <button onClick={() => setPage(p => p + 1)} className="px-3 py-1 text-sm border rounded">Siguiente</button>
         </div>
       </Card>
+
+      <ChangesSection title="Productos con cambios hoy" data={changesToday.data?.items ?? []} loading={changesToday.isLoading} />
+      <ChangesSection title="Productos con cambios esta semana" data={changesWeek.data?.items ?? []} loading={changesWeek.isLoading} />
     </div>
   );
 }
