@@ -6,7 +6,7 @@ import { Card } from "../components/Card";
 import { Pagination } from "../components/Pagination";
 
 const SALES_PAGE_SIZE = 10;
-const COMP_PAGE_SIZE = 5;
+const COMP_PAGE_SIZE = 6;
 
 function fmtDayWithName(iso: string) {
   const d = new Date(iso + "T00:00:00");
