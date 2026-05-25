@@ -21,6 +21,8 @@ export default function Competidores() {
   });
 
   const data = watched.data ?? [];
+  const autoCount = data.filter((w: any) => w.catalog_id).length;
+  const manualCount = data.length - autoCount;
   const totalPages = Math.max(1, Math.ceil(data.length / PAGE_SIZE));
   const safePage = Math.min(page, totalPages);
   const slice = data.slice((safePage - 1) * PAGE_SIZE, safePage * PAGE_SIZE);
@@ -28,11 +30,20 @@ export default function Competidores() {
   return (
     <div className="space-y-4">
       <Card title={`Competidores monitoreados · ${data.length}`}>
-        <div className="flex items-center gap-3 mb-3">
+        <div className="flex items-center gap-3 mb-3 flex-wrap">
           <label className="flex items-center gap-1 text-xs text-slate-600">
             <input type="checkbox" checked={onlyActive} onChange={(e) => setOnlyActive(e.target.checked)} />
             Solo activos
           </label>
+          <span className="text-xs text-slate-500">|</span>
+          <span className="px-2 py-0.5 rounded text-xs bg-emerald-100 text-emerald-700" title="Tienen catalog_id de ML — el cron diario actualiza el precio">
+            {autoCount} con monitoreo automático
+          </span>
+          {manualCount > 0 && (
+            <span className="px-2 py-0.5 rounded text-xs bg-amber-100 text-amber-700" title="Sin catálogo ML — solo como bookmark, no se actualiza el precio">
+              {manualCount} solo bookmark (sin catálogo)
+            </span>
+          )}
         </div>
         {watched.isLoading ? (
           <div className="text-slate-400 text-sm">Cargando…</div>
@@ -49,6 +60,7 @@ export default function Competidores() {
                     <th className="py-2">Competidor</th>
                     <th>Vendedor</th>
                     <th>Tu producto</th>
+                    <th>Monitoreo</th>
                     <th>Precio inicial</th>
                     <th>Precio actual</th>
                     <th>Δ %</th>
@@ -78,6 +90,17 @@ export default function Competidores() {
                           <Link to={`/productos/${w.our_ml_item_id}`} className="text-xs text-indigo-600 hover:underline font-mono">
                             {w.our_ml_item_id}
                           </Link>
+                        </td>
+                        <td>
+                          {w.catalog_id ? (
+                            <span className="px-2 py-0.5 rounded text-xs bg-emerald-100 text-emerald-700" title={`Catalog ${w.catalog_id}`}>
+                              Auto
+                            </span>
+                          ) : (
+                            <span className="px-2 py-0.5 rounded text-xs bg-amber-100 text-amber-700" title="Sin catálogo ML, solo como bookmark">
+                              Manual
+                            </span>
+                          )}
                         </td>
                         <td className="text-xs">{fmtMXN(init)}</td>
                         <td className="font-semibold">{fmtMXN(cur)}</td>

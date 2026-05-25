@@ -375,6 +375,7 @@ function CompetitionItem({ item, rank, ourMlItemId, isWatched }: { item: any; ra
   const marca = item.productoMarca;
   const url = item.zdireccion;
   const sku = item.SKU;
+  const hasCatalog = typeof url === "string" && /\/up\/MLMU\d+/i.test(url);
 
   const qc = useQueryClient();
   const watch = useMutation({
@@ -463,15 +464,21 @@ function CompetitionItem({ item, rank, ourMlItemId, isWatched }: { item: any; ra
 
         <button
           onClick={() => isWatched ? unwatch.mutate() : watch.mutate()}
-          disabled={toggling || !sku}
-          className={`mt-auto w-full px-3 py-2 rounded-md text-sm font-medium border transition-colors disabled:opacity-50 ${
+          disabled={toggling || !sku || (!hasCatalog && !isWatched)}
+          className={`mt-auto w-full px-3 py-2 rounded-md text-sm font-medium border transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${
             isWatched
               ? "bg-amber-50 text-amber-800 border-amber-300 hover:bg-amber-100"
-              : "bg-slate-900 text-white border-slate-900 hover:bg-slate-800"
+              : hasCatalog
+                ? "bg-slate-900 text-white border-slate-900 hover:bg-slate-800"
+                : "bg-slate-100 text-slate-400 border-slate-200"
           }`}
-          title={!sku ? "Sin ID de competidor" : undefined}
+          title={
+            !sku ? "Sin ID de competidor" :
+            !hasCatalog && !isWatched ? "Producto sin catálogo ML — no se puede monitorear precio automáticamente" :
+            undefined
+          }
         >
-          {toggling ? "…" : isWatched ? "★ Dejar de monitorear" : "☆ Monitorear"}
+          {toggling ? "…" : isWatched ? "★ Dejar de monitorear" : hasCatalog ? "☆ Monitorear" : "Sin catálogo"}
         </button>
       </div>
     </div>
