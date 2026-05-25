@@ -1,6 +1,50 @@
 # Kubera · ML Tracker
 
-Web app para registrar diariamente todos los cambios y ventas de **2 cuentas de MercadoLibre**, persistir el histórico en **Supabase** y trackear el objetivo semanal de ventas (default **MX$1,800,000**, editable desde la UI).
+Web app para registrar diariamente todos los cambios y ventas de **2 cuentas de MercadoLibre**, persistir el histórico en **Supabase** y trackear el objetivo semanal de ventas (default **MX$1,800,000**, editable desde la UI). Incluye monitoreo de precios de la competencia con notificaciones automáticas.
+
+---
+
+## 📋 Changelog reciente
+
+### 2026-05-25 — Monitoreo de competidores (vía catálogos ML)
+- **Botón "Monitorear" en cada tarjeta de competencia** → guarda el competidor en watchlist.
+- **Endpoint oficial `/products/{catalog_id}/items`** (no requiere scraping ni Apify recurrente).
+  - Extrae el `catalog_id` (formato `MLMU####`) del URL de Apify.
+  - Llama a ML para obtener el ganador del buy-box: precio + item_id real + seller.
+- **Cron diario integrado** al snapshot de 8 AM CDMX.
+- **Sliding window de 3 registros** en `reporte_monitoreo_competencia_diario`:
+  solo se inserta cuando el precio cambia respecto al registro previo. Si llega un 4to cambio, se borra el más viejo.
+- **Archive mensual automático** al día 1: resumen completo (min/max/avg + historia de cambios) en `reporte_monitoreo_competencia_30day` + limpieza del diario.
+- **Bell de notificaciones** en el header con badge de no leídas, dropdown agrupado por fecha, polling cada 60s.
+- **Vista `/competidores`** con tabla global de watchlist (precio actual vs inicial, Δ%, último check, estado).
+- **Auto-desactivar** competidores con 60+ días en `paused/closed`.
+- Limitación honesta: items sin catálogo ML (URL `/MLM-####-...`) no se pueden monitorear; el botón se deshabilita con tooltip.
+
+### 2026-05-25 — Otras mejoras del día
+- Comparativa de competencia con Apify (scraping de búsqueda ML) con cache 6h.
+- Mosaico responsivo de 6 productos por página.
+- Imágenes HD del producto (CDN ML `-O.jpg` en vez de `-I.jpg`).
+- Búsqueda de productos en el header del Dashboard (autocomplete).
+- Pagination 10/página en lista de Productos.
+
+### 2026-05-22 — Hora exacta y métricas finas
+- Filtros de ventas usan timezone **CDMX** (00:00–23:59) en lugar de UTC.
+- Cron diario corrige a las 8 AM CDMX (timezone explícito en CronTrigger).
+- Excluir órdenes canceladas para matchear "Ventas brutas" del panel ML.
+- Diferenciación entre **abandonos** (sin pago, ignorar) y **cancelaciones reales** (con pago previo).
+- Gráfica de **ventas por hora del día** con 3 series (brutas / reales / cancelaciones).
+- Re-sync de ventas via paid_amount agregado a tabla sales.
+
+### 2026-05-20 — Producción
+- Deploy en Railway con scheduler interno (APScheduler) corriendo a las 8 AM CDMX.
+- Integración Apify para descubrir competidores via búsqueda ML.
+
+### Anterior
+- Snapshot diario de ~2,000 productos × 2 cuentas via ML API.
+- Visitas únicas 1d/7d/30d por producto.
+- Detección de cambios con expansion granular (atributos, tags, variaciones).
+- Top 10 productos por revenue / ticket / stock value / visitas.
+- Paginación en cards de stock bajo / inactivos / antigüedad.
 
 ---
 
@@ -119,6 +163,39 @@ Endpoint POST a `/cron/snapshot` con header `X-Cron-Secret`.
 
 ---
 
+## Monitoreo de competidores (módulo agregado el 2026-05-25)
+
+### Cómo agregar un competidor a monitoreo
+1. Entra al detalle de tu producto (`/productos/{ml_item_id}`).
+2. Click en **"Comparar con otros"** → carga 25 competidores via Apify (o caché 6h).
+3. En cada tarjeta hay un botón **"☆ Monitorear"** → toggle a **"★ Dejar de monitorear"**.
+4. Solo funciona para items con URL de catálogo ML (`/up/MLMU####`).
+
+### Cómo funciona el monitoreo
+- Al agregar: se extrae `catalog_id` del URL → se llama `/products/{catalog_id}/items` → se guarda el item_id real, precio y seller del ganador del buy-box.
+- Cada día a las 8 AM CDMX: el cron consulta el mismo endpoint con concurrencia (12 workers) para todos los watched. Tiempo ~2s para 100 competidores.
+- Sliding window: solo se inserta en `reporte_monitoreo_competencia_diario` cuando el precio cambia. Max 3 registros por competidor.
+- El día 1 de cada mes: archivar mes anterior en `reporte_monitoreo_competencia_30day` con `changes_history` JSON (todos los cambios) + min/max/avg.
+
+### Disparar el job manualmente
+```powershell
+# Local
+cd backend
+.\.venv\Scripts\Activate.ps1
+python -c "from app.services.competitor_monitor import run_competitor_monitoring_job; import json; print(json.dumps(run_competitor_monitoring_job(), indent=2))"
+
+# Vía API (en producción)
+curl -X POST https://TU-RAILWAY-URL/competitors/run-monitoring
+```
+
+### Notificaciones
+- Cada cambio de precio genera una fila en `notifications` con dirección (`up`/`down`/`flat`) y % delta.
+- El bell icon del header polea cada 60s la cuenta de no leídas.
+- Dropdown agrupado por fecha (Hoy / Ayer / Hace X días).
+- Click en una notificación → te lleva al detalle del producto + marca como leída.
+
+---
+
 ## Modelo de datos (Supabase)
 
 | Tabla | Propósito |
@@ -130,6 +207,11 @@ Endpoint POST a `/cron/snapshot` con header `X-Cron-Secret`.
 | `metrics_daily` | (placeholder) visitas, conversión, preguntas. |
 | `goals` | 1 fila por semana ISO. Default 1.8M MXN. Editable desde UI. |
 | `cron_runs` | bitácora de cada ejecución del job. |
+| `competitor_watchlist` | competidores que estás monitoreando (catalog_id, precio inicial vs actual). |
+| `reporte_monitoreo_competencia_diario` | snapshots diarios cuando hay cambio de precio (max 3 por watched). |
+| `reporte_monitoreo_competencia_30day` | resumen mensual archivado con `changes_history`. |
+| `notifications` | bell del header: cambios de precio recientes. |
+| `competition_cache` | resultados de Apify cacheados por 6h por producto. |
 
 Campos trackeados en `product_changes`: `title`, `price`, `original_price`, `available_quantity`, `sold_quantity`, `status`, `listing_type_id`, `condition`, `permalink`, `thumbnail`, `category_id`, `health`.
 

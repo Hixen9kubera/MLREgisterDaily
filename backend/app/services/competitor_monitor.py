@@ -1,21 +1,20 @@
-"""
-Monitoreo de precios de competencia.
+"""Monitoreo de precios de competencia via endpoint de catalogos de ML.
 
-Logica del cron diario:
-  1. Para cada competidor activo en watchlist, fetch precio actual via ML batch /items?ids=...
-  2. Comparar con ultimo registro en diario:
-     - Si precio igual -> no insertar (anti-saturacion)
-     - Si precio cambio -> insertar + sliding window 3 + notificacion
-  3. Si HOY es dia 1 del mes -> archivar mes anterior y limpiar diario.
-  4. Si competidor lleva >=60 dias paused -> auto-desactivar.
+Estrategia:
+  - Cada producto en watchlist guarda un catalog_id (MLMU####) extraido del URL del competidor.
+  - Diariamente llamamos GET /products/{catalog_id}/items que devuelve el item ganador
+    del buy-box con su precio actual. Endpoint oficial, gratis, ~200ms por request.
+  - Solo se insertan nuevos registros cuando el precio cambia (sliding window 3).
+  - El primer dia del mes archivamos el mes anterior y limpiamos diario.
+  - Items sin catalog_id no se pueden monitorear automaticamente.
 """
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import date, datetime, timedelta, timezone
 import logging
+import re
 import statistics
 import threading
 import time
-from typing import Any
 
 from app.db.mysql_tokens import list_ml_tokens
 from app.db.supabase_client import supabase
@@ -24,10 +23,35 @@ from app.utils.tz import today_cdmx
 
 logger = logging.getLogger(__name__)
 
-BATCH_SIZE = 20
-WORKERS = 8
+WORKERS = 12
 MAX_DIARY_RECORDS = 3
 AUTO_DEACTIVATE_AFTER_DAYS_PAUSED = 60
+
+CATALOG_RE = re.compile(r"/up/(MLMU\d+)", re.IGNORECASE)
+ITEM_RE = re.compile(r"MLM-?(\d{8,})", re.IGNORECASE)
+
+
+def extract_catalog_id(url: str | None) -> str | None:
+    """Extrae el catalog_id (MLMU####) del URL de un producto ML."""
+    if not url:
+        return None
+    m = CATALOG_RE.search(url)
+    if m:
+        return m.group(1).upper()
+    return None
+
+
+def fetch_catalog_winner(catalog_id: str, client: MLClient) -> dict | None:
+    """Llama /products/{catalog_id}/items y devuelve el ganador del buy-box."""
+    try:
+        data = client._get(f"/products/{catalog_id}/items")
+        results = data.get("results") or []
+        if not results:
+            return None
+        return results[0]
+    except Exception as e:
+        logger.debug(f"catalog {catalog_id} fail: {e}")
+        return None
 
 
 def watch_competitor(
@@ -40,18 +64,44 @@ def watch_competitor(
     brand: str | None = None,
     price: float | None = None,
 ) -> dict:
-    """Agrega un competidor al watchlist. Si ya existe, lo reactiva."""
+    """Agrega un competidor al watchlist usando el catalog_id como llave de monitoreo.
+
+    Si el URL contiene /up/MLMU####, extrae el catalog_id y llama al endpoint de catalogo
+    para obtener el item_id real + precio actual. Si no, lo guarda con catalog_id=null.
+    """
+    catalog_id = extract_catalog_id(url)
+    resolved_item_id = competitor_ml_id
+    resolved_price = price
+    resolved_seller = seller
+
+    if catalog_id:
+        tokens = list_ml_tokens()
+        if tokens:
+            try:
+                with MLClient(tokens[0]) as cli:
+                    winner = fetch_catalog_winner(catalog_id, cli)
+                    if winner:
+                        resolved_item_id = str(winner.get("item_id") or competitor_ml_id)
+                        if winner.get("price") is not None:
+                            resolved_price = float(winner["price"])
+                        sellr = (winner.get("seller") or {}).get("nickname")
+                        if sellr:
+                            resolved_seller = sellr
+            except Exception as e:
+                logger.warning(f"resolve catalog {catalog_id} fail: {e}")
+
     sb = supabase()
     body = {
         "our_ml_item_id": our_ml_item_id,
-        "competitor_ml_id": competitor_ml_id,
+        "competitor_ml_id": resolved_item_id,
+        "catalog_id": catalog_id,
         "competitor_url": url,
         "title": title,
         "thumbnail": thumbnail,
-        "seller": seller,
+        "seller": resolved_seller,
         "brand": brand,
-        "initial_price": price,
-        "current_price": price,
+        "initial_price": resolved_price,
+        "current_price": resolved_price,
         "is_active": True,
         "paused_streak_days": 0,
     }
@@ -63,7 +113,6 @@ def watch_competitor(
 
 
 def unwatch_competitor(our_ml_item_id: str, competitor_ml_id: str, hard_delete: bool = False) -> bool:
-    """Elimina (o desactiva) un competidor del watchlist."""
     sb = supabase()
     if hard_delete:
         sb.table("competitor_watchlist").delete().eq("our_ml_item_id", our_ml_item_id).eq("competitor_ml_id", competitor_ml_id).execute()
@@ -106,37 +155,51 @@ def list_monthly_reports(competitor_watchlist_id: int) -> list[dict]:
     ).data or []
 
 
-def _fetch_ml_items_batched(ids: list[str]) -> dict[str, dict]:
-    """Llama ML /items?ids=... en batches concurrentes. Devuelve {ml_item_id: item_dict}."""
-    if not ids:
-        return {}
+def _fetch_catalog_prices_concurrent(watched: list[dict]) -> dict[int, dict]:
+    """Para cada watched con catalog_id, hace GET /products/{cat}/items en paralelo.
+
+    Devuelve {watchlist_id: {item_id, price, status, seller_nickname, raw}}.
+    """
     tokens = list_ml_tokens()
     if not tokens:
         raise RuntimeError("No hay tokens ML configurados")
 
-    out: dict[str, dict] = {}
+    out: dict[int, dict] = {}
     lock = threading.Lock()
 
-    # Usamos UN MLClient compartido (su httpx.Client es thread-safe para requests)
+    eligible = [w for w in watched if w.get("catalog_id")]
+    if not eligible:
+        return out
+
     client = MLClient(tokens[0])
 
-    def fetch_batch(chunk: list[str]):
+    def fetch_one(w: dict):
+        cat_id = w["catalog_id"]
         for attempt in range(3):
             try:
-                batch = client.get_items_multi(chunk)
+                winner = fetch_catalog_winner(cat_id, client)
+                if winner is None:
+                    return
+                payload = {
+                    "item_id": str(winner.get("item_id") or ""),
+                    "price": winner.get("price"),
+                    "original_price": winner.get("original_price"),
+                    "available_quantity": winner.get("available_quantity"),
+                    "sold_quantity": winner.get("sold_quantity"),
+                    "status": winner.get("status") or "active",
+                    "seller_nickname": (winner.get("seller") or {}).get("nickname"),
+                    "raw": winner,
+                }
                 with lock:
-                    for it in batch:
-                        if it and it.get("id"):
-                            out[it["id"]] = it
+                    out[w["id"]] = payload
                 return
             except Exception as e:
-                logger.warning(f"batch fail intento {attempt+1}: {e}")
-                time.sleep(2.0 * (attempt + 1))
+                logger.warning(f"catalog {cat_id} attempt {attempt+1} fail: {e}")
+                time.sleep(0.5 * (attempt + 1))
 
     try:
-        chunks = [ids[i:i + BATCH_SIZE] for i in range(0, len(ids), BATCH_SIZE)]
         with ThreadPoolExecutor(max_workers=WORKERS) as pool:
-            futures = [pool.submit(fetch_batch, c) for c in chunks]
+            futures = [pool.submit(fetch_one, w) for w in eligible]
             for _ in as_completed(futures):
                 pass
     finally:
@@ -166,7 +229,6 @@ def _price_changed(prev_price, new_price) -> bool:
 
 
 def _insert_diary_and_prune(watchlist_id: int, snap: dict) -> None:
-    """Inserta nueva fila en diario y mantiene solo las ultimas 3."""
     sb = supabase()
     sb.table("reporte_monitoreo_competencia_diario").upsert(
         snap, on_conflict="competitor_watchlist_id,recorded_date"
@@ -207,7 +269,6 @@ def _create_price_change_notification(watch: dict, prev_price: float | None, new
 
 
 def _archive_previous_month(watch: dict, today: date) -> None:
-    """Si HOY es dia 1, archivar todo el mes anterior."""
     sb = supabase()
     if today.day != 1:
         return
@@ -281,24 +342,19 @@ def _archive_previous_month(watch: dict, today: date) -> None:
 
 
 def run_competitor_monitoring_job() -> dict:
-    """Job diario para monitorear precios de competencia. Llamado desde el cron de 8 AM."""
+    """Job diario que actualiza precios de competidores via endpoint de catalogos."""
     sb = supabase()
     today = today_cdmx()
     watched = list_watched(only_active=True)
     if not watched:
-        return {"watched": 0, "updated": 0, "changed": 0, "notifications": 0, "archived": 0}
+        return {"watched": 0, "fetched": 0, "updated": 0, "changed": 0, "notifications": 0, "archived": 0}
 
-    ids = [w["competitor_ml_id"] for w in watched]
     t0 = time.time()
-    items_by_id = _fetch_ml_items_batched(ids)
-    logger.info(f"competidores: batched {len(ids)} ids -> {len(items_by_id)} fetched en {time.time()-t0:.1f}s")
+    prices = _fetch_catalog_prices_concurrent(watched)
+    duration = round(time.time() - t0, 1)
+    logger.info(f"competidores: fetch {len(prices)}/{len(watched)} en {duration}s")
 
-    updated = 0
-    changed = 0
-    notif_count = 0
-    archived = 0
-    auto_deactivated = 0
-
+    updated = changed = notif_count = archived = auto_deactivated = no_catalog = 0
     for w in watched:
         if today.day == 1:
             try:
@@ -307,16 +363,20 @@ def run_competitor_monitoring_job() -> dict:
             except Exception as e:
                 logger.warning(f"archive fail wid={w['id']}: {e}")
 
-        item = items_by_id.get(w["competitor_ml_id"])
-        if not item:
+        if not w.get("catalog_id"):
+            no_catalog += 1
+            continue
+
+        info = prices.get(w["id"])
+        if not info:
             sb.table("competitor_watchlist").update({
                 "current_status": "not_found",
                 "last_checked_at": datetime.now(timezone.utc).isoformat(),
             }).eq("id", w["id"]).execute()
             continue
 
-        new_price = item.get("price")
-        new_status = item.get("status")
+        new_price = info.get("price")
+        new_status = info.get("status")
         is_paused = new_status in ("paused", "closed", "under_review")
 
         prev_record = _get_last_diary_record(w["id"])
@@ -325,13 +385,14 @@ def run_competitor_monitoring_job() -> dict:
         if _price_changed(prev_price, new_price):
             snap = {
                 "competitor_watchlist_id": w["id"],
-                "competitor_ml_id": w["competitor_ml_id"],
+                "competitor_ml_id": info.get("item_id") or w["competitor_ml_id"],
                 "price": new_price,
-                "original_price": item.get("original_price"),
+                "original_price": info.get("original_price"),
                 "status": new_status,
-                "available_quantity": item.get("available_quantity"),
-                "sold_quantity": item.get("sold_quantity"),
+                "available_quantity": info.get("available_quantity"),
+                "sold_quantity": info.get("sold_quantity"),
                 "recorded_date": today.isoformat(),
+                "raw": info.get("raw"),
             }
             _insert_diary_and_prune(w["id"], snap)
             changed += 1
@@ -351,6 +412,10 @@ def run_competitor_monitoring_job() -> dict:
             "paused_streak_days": new_paused_streak,
             "last_checked_at": datetime.now(timezone.utc).isoformat(),
         }
+        if info.get("item_id") and info["item_id"] != w["competitor_ml_id"]:
+            update_body["competitor_ml_id"] = info["item_id"]
+        if info.get("seller_nickname"):
+            update_body["seller"] = info["seller_nickname"]
         if new_paused_streak >= AUTO_DEACTIVATE_AFTER_DAYS_PAUSED:
             update_body["is_active"] = False
             auto_deactivated += 1
@@ -359,11 +424,12 @@ def run_competitor_monitoring_job() -> dict:
 
     return {
         "watched": len(watched),
-        "fetched": len(items_by_id),
+        "fetched": len(prices),
+        "no_catalog": no_catalog,
         "updated": updated,
         "changed": changed,
         "notifications": notif_count,
         "archived": archived,
         "auto_deactivated": auto_deactivated,
-        "duration_s": round(time.time() - t0, 1),
+        "duration_s": duration,
     }
