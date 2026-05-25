@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import { useParams, Link } from "react-router-dom";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api, fmtMXN, hdImage } from "../lib/api";
 import { Card } from "../components/Card";
 import { Pagination } from "../components/Pagination";
@@ -92,6 +92,13 @@ export default function ProductDetail() {
     queryFn: () => api.compareCompetition(id!),
     enabled: forceFetched && !!id,
     staleTime: 60 * 60 * 1000,
+  });
+
+  // Lista de competidores monitoreados para este producto
+  const watched = useQuery({
+    queryKey: ["watched", id],
+    queryFn: () => api.listWatched(id!, false),
+    enabled: !!id,
   });
 
   const hasResults = !!cached.data || !!comparison.data;
@@ -186,6 +193,8 @@ export default function ProductDetail() {
 
       {(hasResults || isLoading) && (
         <CompetitionCard
+          ourMlItemId={id!}
+          watchedIds={new Set((watched.data ?? []).filter((w: any) => w.is_active).map((w: any) => w.competitor_ml_id))}
           data={activeData}
           loading={isLoading && !activeData}
           error={comparison.error}
@@ -297,7 +306,7 @@ export default function ProductDetail() {
   );
 }
 
-function CompetitionCard({ data, loading, error, page, setPage }: { data: any; loading: boolean; error: any; page: number; setPage: (n: number) => void }) {
+function CompetitionCard({ data, loading, error, page, setPage, ourMlItemId, watchedIds }: { data: any; loading: boolean; error: any; page: number; setPage: (n: number) => void; ourMlItemId: string; watchedIds: Set<string> }) {
   if (loading) {
     return (
       <Card title="Comparativa con competencia">
@@ -338,7 +347,13 @@ function CompetitionCard({ data, loading, error, page, setPage }: { data: any; l
         <>
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
             {slice.map((it: any, i: number) => (
-              <CompetitionItem key={`${safePage}-${i}`} item={it} rank={(safePage - 1) * COMP_PAGE_SIZE + i + 1} />
+              <CompetitionItem
+                key={`${safePage}-${i}`}
+                item={it}
+                rank={(safePage - 1) * COMP_PAGE_SIZE + i + 1}
+                ourMlItemId={ourMlItemId}
+                isWatched={watchedIds.has(it.SKU)}
+              />
             ))}
           </div>
           <Pagination page={safePage} pageSize={COMP_PAGE_SIZE} total={items.length} onChange={setPage} />
@@ -348,7 +363,7 @@ function CompetitionCard({ data, loading, error, page, setPage }: { data: any; l
   );
 }
 
-function CompetitionItem({ item, rank }: { item: any; rank: number }) {
+function CompetitionItem({ item, rank, ourMlItemId, isWatched }: { item: any; rank: number; ourMlItemId: string; isWatched: boolean }) {
   const img = item.imgDireccion || item.thumbnail || item.image;
   const titulo = item.articuloTitulo || item.title || "Sin título";
   const precioActual = item.nuevoPrecio || item.price;
@@ -361,8 +376,30 @@ function CompetitionItem({ item, rank }: { item: any; rank: number }) {
   const url = item.zdireccion;
   const sku = item.SKU;
 
+  const qc = useQueryClient();
+  const watch = useMutation({
+    mutationFn: () => api.watchCompetitor({
+      our_ml_item_id: ourMlItemId,
+      competitor_ml_id: sku,
+      title: titulo,
+      url,
+      thumbnail: img,
+      seller: vendedor,
+      brand: marca,
+      price: precioActual ? Number(precioActual) : null,
+    }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["watched", ourMlItemId] }),
+  });
+  const unwatch = useMutation({
+    mutationFn: () => api.unwatchCompetitor(ourMlItemId, sku, false),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["watched", ourMlItemId] }),
+  });
+  const toggling = watch.isPending || unwatch.isPending;
+
   return (
-    <div className="flex flex-col border border-slate-200 rounded-md overflow-hidden hover:shadow-md transition-shadow bg-white">
+    <div className={`flex flex-col border rounded-md overflow-hidden hover:shadow-md transition-shadow bg-white ${
+      isWatched ? "border-amber-300 ring-2 ring-amber-100" : "border-slate-200"
+    }`}>
       <div className="relative bg-slate-50 aspect-square">
         {img ? (
           <img src={img} alt="" className="w-full h-full object-cover" />
@@ -372,6 +409,9 @@ function CompetitionItem({ item, rank }: { item: any; rank: number }) {
         <span className="absolute top-2 left-2 text-xs w-7 h-7 rounded-full flex items-center justify-center font-semibold bg-white/90 text-slate-700 shadow">
           {rank}
         </span>
+        {isWatched && (
+          <span className="absolute top-2 left-11 px-1.5 py-0.5 rounded bg-amber-400 text-white text-xs font-bold shadow flex items-center gap-0.5">★ Monitoreado</span>
+        )}
         {descuento && (
           <span className="absolute top-2 right-2 px-2 py-0.5 rounded bg-rose-500 text-white text-xs font-semibold shadow">
             {descuento}
@@ -413,13 +453,26 @@ function CompetitionItem({ item, rank }: { item: any; rank: number }) {
           {installments && <div className="text-emerald-700">{installments}</div>}
         </div>
 
-        <div className="flex flex-wrap gap-1 text-xs mt-auto pt-1">
+        <div className="flex flex-wrap gap-1 text-xs">
           {item.Envio && <span className="px-1.5 py-0.5 rounded bg-sky-100 text-sky-700">{item.Envio}</span>}
           {item.envioDesde && <span className="px-1.5 py-0.5 rounded bg-slate-100 text-slate-600">{item.envioDesde}</span>}
           {item.highlight && <span className="px-1.5 py-0.5 rounded bg-amber-100 text-amber-700">{item.highlight}</span>}
           {item.esCompraIternacional && <span className="px-1.5 py-0.5 rounded bg-violet-100 text-violet-700">Internacional</span>}
           {item.promociones && <span className="px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-700">{item.promociones}</span>}
         </div>
+
+        <button
+          onClick={() => isWatched ? unwatch.mutate() : watch.mutate()}
+          disabled={toggling || !sku}
+          className={`mt-auto w-full px-3 py-2 rounded-md text-sm font-medium border transition-colors disabled:opacity-50 ${
+            isWatched
+              ? "bg-amber-50 text-amber-800 border-amber-300 hover:bg-amber-100"
+              : "bg-slate-900 text-white border-slate-900 hover:bg-slate-800"
+          }`}
+          title={!sku ? "Sin ID de competidor" : undefined}
+        >
+          {toggling ? "…" : isWatched ? "★ Dejar de monitorear" : "☆ Monitorear"}
+        </button>
       </div>
     </div>
   );

@@ -7,7 +7,7 @@ from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
 
 from app.config import get_settings
-from app.routes import accounts, cron, dashboard, goals, products
+from app.routes import accounts, competitors, cron, dashboard, goals, notifications, products
 from app.services.jobs import run_daily_job
 
 DIST_DIR = Path(__file__).resolve().parent.parent.parent / "frontend" / "dist"
@@ -52,6 +52,8 @@ app.include_router(products.router)
 app.include_router(goals.router)
 app.include_router(accounts.router)
 app.include_router(cron.router)
+app.include_router(competitors.router)
+app.include_router(notifications.router)
 
 
 @app.get("/health")
@@ -59,7 +61,7 @@ def health():
     return {"ok": True}
 
 
-API_PREFIXES = ("/health", "/dashboard", "/products", "/goals", "/accounts", "/cron", "/docs", "/openapi.json", "/redoc")
+API_PREFIXES = ("/health", "/dashboard", "/products", "/goals", "/accounts", "/cron", "/competitors", "/notifications", "/docs", "/openapi.json", "/redoc")
 
 
 @app.get("/{full_path:path}")

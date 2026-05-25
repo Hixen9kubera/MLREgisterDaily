@@ -58,6 +58,28 @@ export const api = {
     }),
   competitionCache: (id: string) =>
     req<{ keyword: string; items: any[]; total: number; cached: boolean; fetched_at: string }>(`/products/${encodeURIComponent(id)}/competition-cache`),
+
+  // Competitor monitoring
+  watchCompetitor: (body: any) =>
+    req<any>(`/competitors/watch`, { method: "POST", body: JSON.stringify(body) }),
+  unwatchCompetitor: (our_ml_item_id: string, competitor_ml_id: string, hard = false) =>
+    req<any>(`/competitors/watch${qs({ our_ml_item_id, competitor_ml_id, hard: hard ? "true" : "" })}`, { method: "DELETE" }),
+  listWatched: (our_ml_item_id?: string, only_active = true) =>
+    req<any[]>(`/competitors/watched${qs({ our_ml_item_id, only_active: only_active ? "true" : "false" })}`),
+  competitorHistory: (watchlist_id: number, limit = 50) =>
+    req<any[]>(`/competitors/${watchlist_id}/history${qs({ limit })}`),
+  competitorMonthly: (watchlist_id: number) =>
+    req<any[]>(`/competitors/${watchlist_id}/monthly`),
+
+  // Notifications
+  notifications: (unread_only = false, limit = 30) =>
+    req<any[]>(`/notifications${qs({ unread_only: unread_only ? "true" : "false", limit })}`),
+  notificationsGrouped: () => req<any[]>(`/notifications/grouped`),
+  unreadCount: () => req<{ count: number }>(`/notifications/unread-count`),
+  markNotificationRead: (id: number) =>
+    req<any>(`/notifications/${id}/mark-read`, { method: "POST" }),
+  markAllNotificationsRead: () =>
+    req<any>(`/notifications/mark-all-read`, { method: "POST" }),
   goalCurrent: (account_id: string) => req<any>(`/goals/current${qs({ account_id })}`),
   goalsList: (account_id?: string) => req<any[]>(`/goals${qs({ account_id })}`),
   saveGoal: (account_id: string, target_amount: number, note?: string) =>

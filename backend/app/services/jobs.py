@@ -7,6 +7,7 @@ from app.db.supabase_client import supabase
 from app.services.ml_api import MLClient
 from app.services.snapshots import ensure_account, take_snapshot
 from app.services.sales import sync_sales
+from app.services.competitor_monitor import run_competitor_monitoring_job
 
 logger = logging.getLogger(__name__)
 
@@ -41,6 +42,13 @@ def run_daily_job() -> dict:
     except Exception as e:
         err = f"{type(e).__name__}: {e}\n{traceback.format_exc()}"
         status = "error"
+
+    # Monitoreo de competencia (no es critico, no falla el job principal)
+    try:
+        comp_res = run_competitor_monitoring_job()
+        logger.info(f"Competitor monitoring: {comp_res}")
+    except Exception as e:
+        logger.exception(f"competitor monitoring fallo: {e}")
 
     sb.table("cron_runs").update(
         {

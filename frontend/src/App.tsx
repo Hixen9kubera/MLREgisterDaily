@@ -3,6 +3,8 @@ import Dashboard from "./pages/Dashboard";
 import Products from "./pages/Products";
 import ProductDetail from "./pages/ProductDetail";
 import Goals from "./pages/Goals";
+import Competidores from "./pages/Competidores";
+import { NotificationBell } from "./components/NotificationBell";
 
 const navCls = ({ isActive }: { isActive: boolean }) =>
   `px-3 py-2 rounded-md text-sm font-medium ${
@@ -17,10 +19,12 @@ export default function App() {
           <Link to="/" className="font-semibold text-slate-900">
             Kubera · ML Tracker
           </Link>
-          <nav className="flex gap-1">
+          <nav className="flex gap-1 items-center">
             <NavLink to="/" end className={navCls}>Dashboard</NavLink>
             <NavLink to="/productos" className={navCls}>Productos</NavLink>
+            <NavLink to="/competidores" className={navCls}>Competidores</NavLink>
             <NavLink to="/objetivo" className={navCls}>Objetivo</NavLink>
+            <NotificationBell />
           </nav>
         </div>
       </header>
@@ -29,6 +33,7 @@ export default function App() {
           <Route path="/" element={<Dashboard />} />
           <Route path="/productos" element={<Products />} />
           <Route path="/productos/:id" element={<ProductDetail />} />
+          <Route path="/competidores" element={<Competidores />} />
           <Route path="/objetivo" element={<Goals />} />
         </Routes>
       </main>
