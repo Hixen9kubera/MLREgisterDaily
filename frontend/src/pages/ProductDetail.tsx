@@ -191,6 +191,12 @@ export default function ProductDetail() {
         </div>
       </Card>
 
+      <WatchedForProductCard
+        ourMlItemId={id!}
+        watched={(watched.data ?? []).filter((w: any) => w.is_active)}
+        ourPrice={Number(p.price || 0)}
+      />
+
       {(hasResults || isLoading) && (
         <CompetitionCard
           ourMlItemId={id!}
@@ -306,6 +312,84 @@ export default function ProductDetail() {
   );
 }
 
+function WatchedForProductCard({ ourMlItemId, watched, ourPrice }: { ourMlItemId: string; watched: any[]; ourPrice: number }) {
+  const qc = useQueryClient();
+  const unwatch = useMutation({
+    mutationFn: (compId: string) => api.unwatchCompetitor(ourMlItemId, compId, false),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["watched", ourMlItemId] }),
+  });
+
+  if (!watched.length) {
+    return (
+      <Card title="Competencia monitoreada">
+        <div className="text-sm text-slate-500">
+          Aún no monitoreas competidores para este producto. Da clic en "☆ Monitorear" en cualquier tarjeta de la comparativa de abajo.
+        </div>
+      </Card>
+    );
+  }
+
+  return (
+    <Card title={`Competencia monitoreada · ${watched.length}`}>
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+        {watched.map((w: any) => {
+          const cur = Number(w.current_price || 0);
+          const diff = ourPrice ? ((cur - ourPrice) / ourPrice) * 100 : 0;
+          const diffLabel = diff > 0 ? `+${diff.toFixed(0)}%` : `${diff.toFixed(0)}%`;
+          const diffColor = diff > 5 ? "text-emerald-700 bg-emerald-50"
+            : diff < -5 ? "text-rose-700 bg-rose-50"
+            : "text-slate-600 bg-slate-100";
+          return (
+            <div key={w.id} className={`border rounded-md overflow-hidden bg-white ${w.catalog_id ? "border-amber-300" : "border-slate-200"}`}>
+              <div className="flex gap-3 p-3">
+                {w.thumbnail && <img src={w.thumbnail} alt="" className="w-16 h-16 rounded object-cover flex-shrink-0" />}
+                <div className="min-w-0 flex-1">
+                  <a
+                    href={w.competitor_url || `https://listado.mercadolibre.com.mx/${(w.title||"").toLowerCase().replace(/\s+/g,"-")}`}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="text-sm font-medium text-slate-900 hover:text-indigo-600 line-clamp-2"
+                    title={w.title || ""}
+                  >
+                    {w.title || w.competitor_ml_id}
+                  </a>
+                  <div className="text-xs text-slate-500 mt-0.5">
+                    {w.seller && <span>{w.seller}</span>}
+                    {w.catalog_id ? (
+                      <span className="ml-1 px-1 rounded bg-emerald-100 text-emerald-700">Auto</span>
+                    ) : (
+                      <span className="ml-1 px-1 rounded bg-amber-100 text-amber-700">Bookmark</span>
+                    )}
+                  </div>
+                </div>
+              </div>
+              <div className="px-3 pb-3 flex items-end justify-between gap-2">
+                <div>
+                  <div className="text-xs text-slate-500">Precio competidor</div>
+                  <div className="text-lg font-bold text-slate-900">{fmtMXN(cur)}</div>
+                </div>
+                <div className="text-right">
+                  <div className="text-xs text-slate-500">vs nuestro {fmtMXN(ourPrice)}</div>
+                  <span className={`inline-block mt-0.5 px-2 py-0.5 rounded text-xs font-bold ${diffColor}`}>{diffLabel}</span>
+                </div>
+              </div>
+              <div className="px-3 pb-3">
+                <button
+                  onClick={() => unwatch.mutate(w.competitor_ml_id)}
+                  disabled={unwatch.isPending}
+                  className="text-xs text-rose-600 hover:underline disabled:opacity-50"
+                >
+                  Dejar de monitorear
+                </button>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </Card>
+  );
+}
+
 function CompetitionCard({ data, loading, error, page, setPage, ourMlItemId, watchedIds }: { data: any; loading: boolean; error: any; page: number; setPage: (n: number) => void; ourMlItemId: string; watchedIds: Set<string> }) {
   if (loading) {
     return (
@@ -373,9 +457,23 @@ function CompetitionItem({ item, rank, ourMlItemId, isWatched }: { item: any; ra
   const installments = item.installments;
   const vendedor = item.Vendedor;
   const marca = item.productoMarca;
-  const url = item.zdireccion;
+  const rawUrl = item.zdireccion;
   const sku = item.SKU;
-  const hasCatalog = typeof url === "string" && /\/up\/MLMU\d+/i.test(url);
+  const hasCatalog = typeof rawUrl === "string" && /\/up\/MLMU\d+/i.test(rawUrl);
+
+  // Si la URL es click1.../tracking (sin item específico), construir URL de búsqueda con el título
+  const isClickTracking = typeof rawUrl === "string" && rawUrl.includes("click1.mercadolibre");
+  const searchSlug = (titulo || "")
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[̀-ͯ]/g, "")
+    .replace(/[^a-z0-9\s]/g, " ")
+    .replace(/\s+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 80);
+  const url = (!rawUrl || isClickTracking)
+    ? (searchSlug ? `https://listado.mercadolibre.com.mx/${searchSlug}` : "https://www.mercadolibre.com.mx")
+    : rawUrl;
 
   const qc = useQueryClient();
   const watch = useMutation({
@@ -464,21 +562,16 @@ function CompetitionItem({ item, rank, ourMlItemId, isWatched }: { item: any; ra
 
         <button
           onClick={() => isWatched ? unwatch.mutate() : watch.mutate()}
-          disabled={toggling || !sku || (!hasCatalog && !isWatched)}
-          className={`mt-auto w-full px-3 py-2 rounded-md text-sm font-medium border transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${
+          disabled={toggling}
+          className={`mt-auto w-full px-3 py-2 rounded-md text-sm font-medium border transition-colors disabled:opacity-50 ${
             isWatched
               ? "bg-amber-50 text-amber-800 border-amber-300 hover:bg-amber-100"
-              : hasCatalog
-                ? "bg-slate-900 text-white border-slate-900 hover:bg-slate-800"
-                : "bg-slate-100 text-slate-400 border-slate-200"
+              : "bg-slate-900 text-white border-slate-900 hover:bg-slate-800"
           }`}
-          title={
-            !sku ? "Sin ID de competidor" :
-            !hasCatalog && !isWatched ? "Producto sin catálogo ML — no se puede monitorear precio automáticamente" :
-            undefined
-          }
+          title={!hasCatalog && !isWatched ? "Sin catálogo: se guarda como bookmark (sin update automático de precio)" : undefined}
         >
-          {toggling ? "…" : isWatched ? "★ Dejar de monitorear" : hasCatalog ? "☆ Monitorear" : "Sin catálogo"}
+          {toggling ? "…" : isWatched ? "★ Dejar de monitorear" : "☆ Monitorear"}
+          {!hasCatalog && !isWatched && <span className="ml-1 text-xs opacity-75">(bookmark)</span>}
         </button>
       </div>
     </div>
