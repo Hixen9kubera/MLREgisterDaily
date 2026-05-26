@@ -8,6 +8,7 @@ from app.services.ml_api import MLClient
 from app.services.snapshots import ensure_account, take_snapshot
 from app.services.sales import sync_sales
 from app.services.competitor_monitor import run_competitor_monitoring_job
+from app.services.sales_archive import run_sales_archive_job
 
 logger = logging.getLogger(__name__)
 
@@ -49,6 +50,13 @@ def run_daily_job() -> dict:
         logger.info(f"Competitor monitoring: {comp_res}")
     except Exception as e:
         logger.exception(f"competitor monitoring fallo: {e}")
+
+    # Archive de ventas (mantiene 4 semanas + archive mensual)
+    try:
+        arch_res = run_sales_archive_job()
+        logger.info(f"Sales archive: {arch_res}")
+    except Exception as e:
+        logger.exception(f"sales archive fallo: {e}")
 
     sb.table("cron_runs").update(
         {
